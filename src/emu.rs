@@ -45,6 +45,7 @@ struct Registers {
     pc: u16,
     sp: u8,
     vx: [u8; 16],
+    i: u16,
     dt: u8,
     st: u8,
 }
@@ -61,7 +62,7 @@ impl Emu {
         Emu {
             regs: Registers::default(),
             ram: vec![0; RAM_SIZE as usize],
-            stack: vec![0; STACK_SIZE as usize],
+            stack: Vec::with_capacity(STACK_SIZE as usize),
             frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
         }
     }
@@ -92,22 +93,27 @@ impl Emu {
 
     pub fn step(&mut self) -> Result<(), EmuError> {
         let pc = self.regs.pc;
+        if !is_valid_addr(pc) {
+            // TODO: ideally would check pc + 1 too
+            return Err(EmuError::AddressError(pc));
+        }
+
         let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
 
         match opcode & 0xf000 {
-            0 => match opcode & 0x000f {
+            0x0 => match opcode & 0x000f {
                 0x0 => self.op_cls(opcode),
                 0xe => self.op_ret(opcode),
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
-            1 => self.op_jump(opcode),
-            2 => self.op_call(opcode),
-            3 => self.op_skip_equal_const(opcode),
-            4 => self.op_skip_not_equal_const(opcode),
-            5 => self.op_skip_equal_reg(opcode),
-            6 => self.op_load_const(opcode),
-            7 => self.op_add_const(opcode),
-            8 => match opcode & 0x000f {
+            0x1 => self.op_jump(opcode),
+            0x2 => self.op_call(opcode),
+            0x3 => self.op_skip_equal_const(opcode),
+            0x4 => self.op_skip_not_equal_const(opcode),
+            0x5 => self.op_skip_equal_reg(opcode),
+            0x6 => self.op_load_const(opcode),
+            0x7 => self.op_add_const(opcode),
+            0x8 => match opcode & 0x000f {
                 0x0 => self.op_load_reg(opcode),
                 0x1 => self.op_or(opcode),
                 0x2 => self.op_xor(opcode),
@@ -116,6 +122,28 @@ impl Emu {
                 0x6 => self.op_shift_right(opcode),
                 0x7 => self.op_subn_reg(opcode),
                 0xe => self.op_shift_left(opcode),
+                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+            },
+            0x9 => self.op_skip_not_equal_reg(opcode),
+            0xa => self.op_load_i(opcode),
+            0xb => self.op_jump_plus(opcode),
+            0xc => self.op_random(opcode),
+            0xd => self.op_display(opcode),
+            0xe => match opcode & 0x00ff {
+                0x9e => self.op_skip_if_key(opcode),
+                0xa1 => self.op_skip_if_not_key(opcode),
+                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+            },
+            0xf => match opcode & 0x00ff {
+                0x07 => self.op_load_delay(opcode),
+                0x0a => self.op_wait_for_key(opcode),
+                0x15 => self.op_set_delay(opcode),
+                0x18 => self.op_set_sound(opcode),
+                0x1e => self.op_add_i(opcode),
+                0x29 => self.op_load_sprite(opcode),
+                0x33 => self.op_store_bcd(opcode),
+                0x55 => self.op_store_regs(opcode),
+                0x65 => self.op_load_regs(opcode),
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
             _ => Err(EmuError::InvalidInstruction(pc, opcode)),
@@ -165,6 +193,12 @@ impl Emu {
     }
 
     #[inline]
+    fn op_skip_not_equal_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
     fn op_load_const(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
@@ -172,6 +206,12 @@ impl Emu {
 
     #[inline]
     fn op_add_const(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_add_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
@@ -190,12 +230,6 @@ impl Emu {
 
     #[inline]
     fn op_xor(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
-        Ok(())
-    }
-
-    #[inline]
-    fn op_add_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
@@ -220,6 +254,96 @@ impl Emu {
 
     #[inline]
     fn op_shift_left(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_load_i(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_jump_plus(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_random(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_display(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_skip_if_key(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_skip_if_not_key(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_load_delay(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_wait_for_key(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_set_delay(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_set_sound(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_add_i(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_load_sprite(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_store_bcd(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_store_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // TODO:
+        Ok(())
+    }
+
+    #[inline]
+    fn op_load_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
