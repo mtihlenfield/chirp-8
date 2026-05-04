@@ -3,10 +3,31 @@ use std::fmt::Display;
 
 const RAM_SIZE: u16 = 0x1000;
 const STACK_SIZE: u8 = 16;
+
+// Note that this is in pixels.
 const DISPLAY_COLS: u16 = 64;
 const DISPLAY_ROWS: u16 = 32;
 const RESERVED_END: u16 = 0x1ff;
 const UNRESERVED_START: u16 = 0x200;
+
+const DEFAULT_FONT: [[u8; 5]; 16] = [
+    [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
+    [0x20, 0x60, 0x20, 0x20, 0x70], // 1
+    [0xf0, 0x10, 0xf0, 0x80, 0xf0], // 2
+    [0xf0, 0x10, 0xf0, 0x10, 0xf0], // 3
+    [0x90, 0x90, 0xf0, 0x10, 0x10], // 4
+    [0xf0, 0x80, 0xf0, 0x10, 0xf0], // 5
+    [0xf0, 0x80, 0xf0, 0x90, 0xf0], // 6
+    [0xf0, 0x10, 0x20, 0x40, 0x40], // 7
+    [0xf0, 0x90, 0xf0, 0x90, 0xf0], // 8
+    [0xf0, 0x90, 0xf0, 0x10, 0xf0], // 9
+    [0xf0, 0x90, 0xf0, 0x90, 0x90], // A
+    [0xe0, 0x90, 0xe0, 0x90, 0xe0], // B
+    [0xf0, 0x80, 0x80, 0x80, 0xf0], // C
+    [0xe0, 0x90, 0x90, 0x90, 0xe0], // D
+    [0xf0, 0x80, 0xf0, 0x80, 0xf0], // E
+    [0xf0, 0x80, 0xf0, 0x80, 0x80], // F
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EmuError {
@@ -16,6 +37,8 @@ pub enum EmuError {
     LoadError(u16, u16),
     // Invalid instruction .1 at .0
     InvalidInstruction(u16, u16),
+    // Attempt to push more than STACK_SIZE values to stack at addr
+    StackOverflowError(u16),
 }
 
 impl Display for EmuError {
@@ -33,6 +56,9 @@ impl Display for EmuError {
             }
             Self::InvalidInstruction(addr, instr) => {
                 write!(f, "Invalid instruction 0x{:x} at 0x{:x}", instr, addr)
+            }
+            Self::StackOverflowError(addr) => {
+                write!(f, "Stack overflow error at 0x{:x}", addr)
             }
         }
     }
@@ -54,17 +80,29 @@ pub struct Emu {
     regs: Registers,
     ram: Vec<u8>,
     stack: Vec<u16>,
-    frame_buff: Vec<u8>,
+
+    // We're taking advantage of the fact that rows are 64 cols wide and
+    // representing rows a u64s
+    frame_buff: Vec<u64>,
 }
 
 impl Emu {
     pub fn new() -> Emu {
-        Emu {
+        let mut emu = Emu {
             regs: Registers::default(),
             ram: vec![0; RAM_SIZE as usize],
             stack: Vec::with_capacity(STACK_SIZE as usize),
-            frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
+            frame_buff: vec![0; DISPLAY_ROWS as usize],
+        };
+
+        let mut addr = 0x0;
+        for sprite in DEFAULT_FONT {
+            let len = sprite.len();
+            emu.ram[addr..addr + len].copy_from_slice(&sprite);
+            addr += len;
         }
+
+        emu
     }
 
     pub fn load(&mut self, addr: u16, data: Vec<u8>) -> Result<(), EmuError> {
@@ -76,7 +114,7 @@ impl Emu {
             return Err(EmuError::LoadError(addr, data.len() as u16));
         }
 
-        self.ram[(addr as usize)..data.len()].copy_from_slice(&data);
+        self.ram[(addr as usize)..(addr as usize) + data.len()].copy_from_slice(&data);
 
         Ok(())
     }
@@ -99,10 +137,11 @@ impl Emu {
         }
 
         let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
+        println!("pc: 0x{:x}, opcode: 0x{:x}", pc, opcode);
 
         match opcode & 0xf000 {
             0x0 => match opcode & 0x000f {
-                0x0 => self.op_cls(opcode),
+                0x0 => self.op_cls(),
                 0xe => self.op_ret(opcode),
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
@@ -151,14 +190,20 @@ impl Emu {
     }
 
     #[inline]
+    fn incr_pc(&mut self) {
+        self.regs.pc += 2;
+    }
+
+    #[inline]
     fn op_ret(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
 
     #[inline]
-    fn op_cls(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+    fn op_cls(&mut self) -> Result<(), EmuError> {
+        self.frame_buff.fill(0);
+        self.incr_pc();
         Ok(())
     }
 
@@ -170,6 +215,10 @@ impl Emu {
 
     #[inline]
     fn op_call(&mut self, opcode: u16) -> Result<(), EmuError> {
+        if self.stack.len() >= STACK_SIZE as usize {
+            return Err(EmuError::StackOverflowError(self.regs.pc));
+        }
+
         // TODO:
         Ok(())
     }
@@ -200,7 +249,13 @@ impl Emu {
 
     #[inline]
     fn op_load_const(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let reg = (opcode & 0x0f00) >> 8;
+        let val = opcode & 0x00ff;
+
+        self.regs.vx[reg as usize] = val as u8;
+
+        self.incr_pc();
+
         Ok(())
     }
 
