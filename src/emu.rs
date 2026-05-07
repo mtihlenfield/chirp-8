@@ -5,10 +5,9 @@ const RAM_SIZE: u16 = 0x1000;
 const STACK_SIZE: u8 = 16;
 
 // Note that this is in pixels.
-const DISPLAY_COLS: u16 = 64;
-const DISPLAY_ROWS: u16 = 32;
-const RESERVED_END: u16 = 0x1ff;
-const UNRESERVED_START: u16 = 0x200;
+pub const DISPLAY_COLS: u16 = 64;
+pub const DISPLAY_ROWS: u16 = 32;
+pub const UNRESERVED_START: u16 = 0x200;
 
 const DEFAULT_FONT: [[u8; 5]; 16] = [
     [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
@@ -76,14 +75,24 @@ struct Registers {
     st: u8,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum PixelState {
+    On,
+    Off,
+}
+
 pub struct Emu {
     regs: Registers,
     ram: Vec<u8>,
     stack: Vec<u16>,
 
-    // We're taking advantage of the fact that rows are 64 cols wide and
-    // representing rows a u64s
-    frame_buff: Vec<u64>,
+    frame_buff: Vec<PixelState>,
+}
+
+impl Default for Emu {
+    fn default() -> Emu {
+        Self::new()
+    }
 }
 
 impl Emu {
@@ -92,7 +101,7 @@ impl Emu {
             regs: Registers::default(),
             ram: vec![0; RAM_SIZE as usize],
             stack: Vec::with_capacity(STACK_SIZE as usize),
-            frame_buff: vec![0; DISPLAY_ROWS as usize],
+            frame_buff: vec![PixelState::Off; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
         };
 
         let mut addr = 0x0;
@@ -139,10 +148,10 @@ impl Emu {
         let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
         println!("pc: 0x{:x}, opcode: 0x{:x}", pc, opcode);
 
-        match opcode & 0xf000 {
-            0x0 => match opcode & 0x000f {
-                0x0 => self.op_cls(),
-                0xe => self.op_ret(opcode),
+        match (opcode & 0xf000) >> 12 {
+            0x0 => match opcode {
+                0x00e0 => self.op_cls(),
+                0x00ee => self.op_ret(opcode),
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
             0x1 => self.op_jump(opcode),
@@ -189,6 +198,10 @@ impl Emu {
         }
     }
 
+    pub fn frame_buffer(&self) -> &[PixelState] {
+        &self.frame_buff
+    }
+
     #[inline]
     fn incr_pc(&mut self) {
         self.regs.pc += 2;
@@ -202,14 +215,15 @@ impl Emu {
 
     #[inline]
     fn op_cls(&mut self) -> Result<(), EmuError> {
-        self.frame_buff.fill(0);
+        self.frame_buff.fill(PixelState::Off);
         self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_jump(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let addr: u16 = opcode & 0x0fff;
+        self.regs.pc = addr;
         Ok(())
     }
 
@@ -315,7 +329,10 @@ impl Emu {
 
     #[inline]
     fn op_load_i(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let val = opcode & 0x0fff;
+        self.regs.i = val as u16;
+        self.incr_pc();
+
         Ok(())
     }
 
@@ -333,7 +350,33 @@ impl Emu {
 
     #[inline]
     fn op_display(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let x_pixel = self.regs.vx[((opcode & 0x0f00) >> 8) as usize];
+        let y_pixel = self.regs.vx[((opcode & 0x00f0) >> 4) as usize];
+        let num_bytes = (opcode & 0x000f) as usize;
+        let sprite_addr = self.regs.i as usize;
+        let sprite_bytes = &self.ram[sprite_addr..(sprite_addr + num_bytes)];
+
+        // TODO: This is pretty dirty but it works. There is surely a faster way to do this with bit manipulation
+        for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
+            let mut col = 0;
+            for i in (0..8).rev() {
+                let state = match (row >> i) & 1 {
+                    0 => PixelState::Off,
+                    _ => PixelState::On,
+                };
+
+                let idx = ((x_pixel as usize) + col)
+                    + ((y_pixel as usize) + row_idx) * DISPLAY_COLS as usize;
+                self.frame_buff[idx] = state;
+                col += 1;
+            }
+        }
+
+        // TODO: still have to handle setting the VF regsiter on collision. Not going to support
+        // sprite wrapound
+
+        self.incr_pc();
+
         Ok(())
     }
 
