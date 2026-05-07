@@ -43,6 +43,8 @@ pub enum EmuError {
     InvalidInstruction(u16, u16),
     // Attempt to push more than STACK_SIZE values to stack at addr
     StackOverflowError(u16),
+    // Attempt to pop from an empty stack at addr
+    StackUnderflowError(u16),
 }
 
 impl Display for EmuError {
@@ -63,6 +65,9 @@ impl Display for EmuError {
             }
             Self::StackOverflowError(addr) => {
                 write!(f, "Stack overflow error at 0x{:x}", addr)
+            }
+            Self::StackUnderflowError(addr) => {
+                write!(f, "Attempt to pop from empty stack at 0x{:x}", addr)
             }
         }
     }
@@ -155,11 +160,10 @@ impl Emu {
         let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
         // println!("0x{:x}: {:x}", pc, opcode);
 
-        // TODO: change load_i to load_index
         match (opcode & 0xf000) >> 12 {
             0x0 => match opcode {
                 0x00e0 => self.op_cls(),
-                0x00ee => self.op_ret(opcode),
+                0x00ee => self.op_ret(),
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
             0x1 => self.op_jump(opcode),
@@ -216,8 +220,11 @@ impl Emu {
     }
 
     #[inline]
-    fn op_ret(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+    fn op_ret(&mut self) -> Result<(), EmuError> {
+        self.regs.pc = self
+            .stack
+            .pop()
+            .ok_or(EmuError::StackUnderflowError(self.regs.pc))?;
         Ok(())
     }
 
@@ -241,7 +248,10 @@ impl Emu {
             return Err(EmuError::StackOverflowError(self.regs.pc));
         }
 
-        // TODO:
+        let addr = opcode & 0x0fff;
+        self.stack.push(self.regs.pc + 2);
+        self.regs.pc = addr;
+
         Ok(())
     }
 
@@ -528,6 +538,17 @@ mod tests {
     }
 
     #[test]
+    fn test_op_ret() {
+        let mut emu = Emu::new();
+        emu.stack.push(0xfff);
+
+        emu.op_ret().unwrap();
+        assert_eq!(emu.regs.pc, 0xfff);
+
+        assert_eq!(emu.op_ret(), Err(EmuError::StackUnderflowError(0xfff)));
+    }
+
+    #[test]
     fn test_op_jump() {
         let mut emu = Emu::new();
         emu.op_jump(0x1fff).unwrap();
@@ -625,5 +646,14 @@ mod tests {
             );
             assert_eq!(emu.regs.pc, (i * 2) + 2);
         }
+    }
+
+    #[test]
+    fn test_op_call() {
+        let mut emu = Emu::new();
+        emu.jump(0x200).unwrap();
+        emu.op_call(0x2fff).unwrap();
+        assert_eq!(emu.regs.pc, 0xfff);
+        assert_eq!(emu.stack.pop(), Some(0x202));
     }
 }
