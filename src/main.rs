@@ -41,6 +41,7 @@
 //      - us pixels and winit lib?
 //
 use pixels::{Pixels, SurfaceTexture};
+use std::env;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -102,6 +103,7 @@ impl<'win> ApplicationHandler for App<'win> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
+                // TODO: one instruction per redraw is very slow.
                 self.emu.step().expect("Program step failed!");
 
                 let emu_frame_buff = self.emu.frame_buffer();
@@ -110,8 +112,8 @@ impl<'win> ApplicationHandler for App<'win> {
                     let frame = pixels.frame_mut();
                     for (i, pixel) in frame.chunks_exact_mut(4).enumerate() {
                         let value = match emu_frame_buff[i] {
-                            emu::PixelState::On => 0xff,
-                            emu::PixelState::Off => 0x00,
+                            0 => 0x00,
+                            _ => 0xff,
                         };
 
                         // These are r, g, b, a values
@@ -144,15 +146,46 @@ fn main() {
 
     let mut app = App::default();
 
-    let program: [u8; 10] = [
-        0xa0, 0x00, // Load 0x000 in to i - the address of the first sprite
-        0x60, 0x00, // Load 0x00 in to v0 - the x coord for the sprite
-        0x61, 0x00, // Load 0x00 in to v1 - the y coord for the sprite
-        0xd0, 0x15, // Load the 5 byte sprite in to the addr add (v0, v1)
-        0x12, 0x00, // Loop back to 0 and run again
-    ];
-    app.load(program.to_vec())
-        .expect("Failed to load in program");
+    // v0 = sprite index
+    // v1 = col
+    // v2 = row
+    // let program: [u8; 32] = [
+    //     0x60, 0x01, // Load the index of the hex sprite in to v0
+    //     0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
+    //     0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
+    //     0xf0, 0x29, // Set I to the sprite V0
+    //     0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
+    //     0x70, 0x01, // bump v0 to the next index
+    //     0x40, 0x11, // skip the next instr if  v0 =! 17
+    //     0x12, 0x1e, // jump to the infinite loop
+    //     0x40, 0x0a, // skip the next instr if v0 =! 10
+    //     0x12, 0x18, // jump 4 instrs forward (0x218)
+    //     0x71, 0x05, // move the col over to the next char
+    //     0x12, 0x04, // Loop back to the point where we set I and start again
+    //     0x72, 0x06, // incr v2 by 6 (chars are 5 rows, add 1 row for spacing)
+    //     0x61, 0x00, // set v1 to 0
+    //     0x12, 0x06, // Loop back to the point where we set I and start again
+    //     0x12, 0x1e, // Loop forever
+    // ];
+
+    let mut args = env::args();
+    args.next();
+
+    let program = if let Some(path) = args.next() {
+        std::fs::read(path).unwrap()
+    } else {
+        [
+            0x60, 0x0f, // Load the index of the hex sprite in to v0
+            0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
+            0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
+            0xf0, 0x29, // Set I to the sprite V0
+            0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
+            0x12, 0x00, // Loop forever
+        ]
+        .to_vec()
+    };
+
+    app.load(program).expect("Failed to load in program");
 
     event_loop
         .run_app(&mut app)

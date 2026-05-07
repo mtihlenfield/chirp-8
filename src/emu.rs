@@ -8,6 +8,11 @@ const STACK_SIZE: u8 = 16;
 pub const DISPLAY_COLS: u16 = 64;
 pub const DISPLAY_ROWS: u16 = 32;
 pub const UNRESERVED_START: u16 = 0x200;
+pub const DEFAULT_FONT_START: u16 = 0x0;
+pub const DEFAULT_FONT_LEN: u16 = 0x5;
+
+#[cfg(test)]
+pub const RESERVED_END: u16 = 0x1ff;
 
 const DEFAULT_FONT: [[u8; 5]; 16] = [
     [0xf0, 0x90, 0x90, 0x90, 0xf0], // 0
@@ -75,18 +80,12 @@ struct Registers {
     st: u8,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum PixelState {
-    On,
-    Off,
-}
-
 pub struct Emu {
     regs: Registers,
     ram: Vec<u8>,
     stack: Vec<u16>,
 
-    frame_buff: Vec<PixelState>,
+    frame_buff: Vec<u8>,
 }
 
 impl Default for Emu {
@@ -101,7 +100,7 @@ impl Emu {
             regs: Registers::default(),
             ram: vec![0; RAM_SIZE as usize],
             stack: Vec::with_capacity(STACK_SIZE as usize),
-            frame_buff: vec![PixelState::Off; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
+            frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
         };
 
         let mut addr = 0x0;
@@ -112,6 +111,14 @@ impl Emu {
         }
 
         emu
+    }
+
+    #[cfg(test)]
+    pub fn reset(&mut self) {
+        self.regs = Registers::default();
+        self.ram.fill(0);
+        self.stack.fill(0);
+        self.frame_buff.fill(0);
     }
 
     pub fn load(&mut self, addr: u16, data: Vec<u8>) -> Result<(), EmuError> {
@@ -146,8 +153,9 @@ impl Emu {
         }
 
         let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
-        println!("pc: 0x{:x}, opcode: 0x{:x}", pc, opcode);
+        // println!("0x{:x}: {:x}", pc, opcode);
 
+        // TODO: change load_i to load_index
         match (opcode & 0xf000) >> 12 {
             0x0 => match opcode {
                 0x00e0 => self.op_cls(),
@@ -156,11 +164,11 @@ impl Emu {
             },
             0x1 => self.op_jump(opcode),
             0x2 => self.op_call(opcode),
-            0x3 => self.op_skip_equal_const(opcode),
-            0x4 => self.op_skip_not_equal_const(opcode),
+            0x3 => self.op_skip_equal_immediate(opcode),
+            0x4 => self.op_skip_not_equal_immediate(opcode),
             0x5 => self.op_skip_equal_reg(opcode),
-            0x6 => self.op_load_const(opcode),
-            0x7 => self.op_add_const(opcode),
+            0x6 => self.op_load_immediate(opcode),
+            0x7 => self.op_add_immediate(opcode),
             0x8 => match opcode & 0x000f {
                 0x0 => self.op_load_reg(opcode),
                 0x1 => self.op_or(opcode),
@@ -173,7 +181,7 @@ impl Emu {
                 _ => Err(EmuError::InvalidInstruction(pc, opcode)),
             },
             0x9 => self.op_skip_not_equal_reg(opcode),
-            0xa => self.op_load_i(opcode),
+            0xa => self.op_load_index(opcode),
             0xb => self.op_jump_plus(opcode),
             0xc => self.op_random(opcode),
             0xd => self.op_display(opcode),
@@ -187,7 +195,7 @@ impl Emu {
                 0x0a => self.op_wait_for_key(opcode),
                 0x15 => self.op_set_delay(opcode),
                 0x18 => self.op_set_sound(opcode),
-                0x1e => self.op_add_i(opcode),
+                0x1e => self.op_add_index(opcode),
                 0x29 => self.op_load_sprite(opcode),
                 0x33 => self.op_store_bcd(opcode),
                 0x55 => self.op_store_regs(opcode),
@@ -198,7 +206,7 @@ impl Emu {
         }
     }
 
-    pub fn frame_buffer(&self) -> &[PixelState] {
+    pub fn frame_buffer(&self) -> &[u8] {
         &self.frame_buff
     }
 
@@ -215,7 +223,7 @@ impl Emu {
 
     #[inline]
     fn op_cls(&mut self) -> Result<(), EmuError> {
-        self.frame_buff.fill(PixelState::Off);
+        self.frame_buff.fill(0);
         self.incr_pc();
         Ok(())
     }
@@ -238,14 +246,21 @@ impl Emu {
     }
 
     #[inline]
-    fn op_skip_equal_const(&mut self, opcode: u16) -> Result<(), EmuError> {
+    fn op_skip_equal_immediate(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
 
     #[inline]
-    fn op_skip_not_equal_const(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+    fn op_skip_not_equal_immediate(&mut self, opcode: u16) -> Result<(), EmuError> {
+        let vx = (opcode & 0x0f00) >> 8;
+        let val = opcode & 0x00ff;
+
+        if self.regs.vx[vx as usize] != (val as u8) {
+            self.regs.pc += 4;
+        } else {
+            self.incr_pc();
+        }
         Ok(())
     }
 
@@ -262,20 +277,22 @@ impl Emu {
     }
 
     #[inline]
-    fn op_load_const(&mut self, opcode: u16) -> Result<(), EmuError> {
+    fn op_load_immediate(&mut self, opcode: u16) -> Result<(), EmuError> {
         let reg = (opcode & 0x0f00) >> 8;
         let val = opcode & 0x00ff;
-
         self.regs.vx[reg as usize] = val as u8;
-
         self.incr_pc();
-
         Ok(())
     }
 
     #[inline]
-    fn op_add_const(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+    fn op_add_immediate(&mut self, opcode: u16) -> Result<(), EmuError> {
+        let reg = (opcode & 0x0f00) >> 8;
+        let val = opcode & 0x00ff;
+        // NOTE: for some reason this instruction does *not* set Vf on overflow. It just
+        // overflows silently
+        self.regs.vx[reg as usize] = self.regs.vx[reg as usize].wrapping_add(val as u8);
+        self.incr_pc();
         Ok(())
     }
 
@@ -328,7 +345,7 @@ impl Emu {
     }
 
     #[inline]
-    fn op_load_i(&mut self, opcode: u16) -> Result<(), EmuError> {
+    fn op_load_index(&mut self, opcode: u16) -> Result<(), EmuError> {
         let val = opcode & 0x0fff;
         self.regs.i = val as u16;
         self.incr_pc();
@@ -353,6 +370,7 @@ impl Emu {
         let x_pixel = self.regs.vx[((opcode & 0x0f00) >> 8) as usize];
         let y_pixel = self.regs.vx[((opcode & 0x00f0) >> 4) as usize];
         let num_bytes = (opcode & 0x000f) as usize;
+        // TODO: need to check this address
         let sprite_addr = self.regs.i as usize;
         let sprite_bytes = &self.ram[sprite_addr..(sprite_addr + num_bytes)];
 
@@ -360,20 +378,21 @@ impl Emu {
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
             let mut col = 0;
             for i in (0..8).rev() {
-                let state = match (row >> i) & 1 {
-                    0 => PixelState::Off,
-                    _ => PixelState::On,
-                };
+                let idx = ((x_pixel as usize) + (col % DISPLAY_COLS as usize))
+                    + ((y_pixel as usize) + (row_idx % DISPLAY_ROWS as usize))
+                        * DISPLAY_COLS as usize;
 
-                let idx = ((x_pixel as usize) + col)
-                    + ((y_pixel as usize) + row_idx) * DISPLAY_COLS as usize;
-                self.frame_buff[idx] = state;
+                let state = (row >> i) & 1;
+                if state == 1 && self.frame_buff[idx] == 1 {
+                    self.regs.vx[0xf] = 1;
+                } else {
+                    self.regs.vx[0xf] = 0;
+                }
+
+                self.frame_buff[idx] ^= state;
                 col += 1;
             }
         }
-
-        // TODO: still have to handle setting the VF regsiter on collision. Not going to support
-        // sprite wrapound
 
         self.incr_pc();
 
@@ -417,14 +436,17 @@ impl Emu {
     }
 
     #[inline]
-    fn op_add_i(&mut self, opcode: u16) -> Result<(), EmuError> {
+    fn op_add_index(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
         Ok(())
     }
 
     #[inline]
     fn op_load_sprite(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = (opcode & 0x0f00) >> 8;
+        let sprite = self.regs.vx[vx as usize] as u16;
+        self.regs.i = DEFAULT_FONT_START + (sprite * DEFAULT_FONT_LEN);
+        self.incr_pc();
         Ok(())
     }
 
@@ -493,5 +515,115 @@ mod tests {
                 .unwrap_err(),
             EmuError::LoadError(UNRESERVED_START, RAM_SIZE + 1)
         );
+    }
+
+    #[test]
+    fn test_op_cls() {
+        let mut emu = Emu::new();
+        emu.frame_buff.fill(1);
+
+        emu.op_cls().unwrap();
+        assert!(emu.frame_buff.iter().all(|p| *p == 0));
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_jump() {
+        let mut emu = Emu::new();
+        emu.op_jump(0x1fff).unwrap();
+        assert_eq!(emu.regs.pc, 0xfff);
+    }
+
+    #[test]
+    fn test_op_skip_not_equal_immediate() {
+        let mut emu = Emu::new();
+
+        // v0 == 0, so should not skip
+        emu.op_skip_not_equal_immediate(0xf000).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.reset();
+
+        // v0 == 0, so should skip
+        emu.op_skip_not_equal_immediate(0xf001).unwrap();
+        assert_eq!(emu.regs.pc, 4);
+
+        emu.reset();
+
+        // testing masking
+        emu.op_skip_not_equal_immediate(0xffff).unwrap();
+        assert_eq!(emu.regs.pc, 4);
+
+        emu.reset();
+
+        // testing masking
+        emu.regs.vx[0xf] = 0xff;
+        emu.op_skip_not_equal_immediate(0xffff).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_load_immediate() {
+        let mut emu = Emu::new();
+        emu.op_load_immediate(0x60ff).unwrap();
+        assert_eq!(emu.regs.vx[0], 0xff);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.op_load_immediate(0x6e0f).unwrap();
+        assert_eq!(emu.regs.vx[0xe], 0x0f);
+        assert_eq!(emu.regs.pc, 4);
+    }
+
+    #[test]
+    fn test_op_add_immediate() {
+        let mut emu = Emu::new();
+
+        emu.op_add_immediate(0x7005).unwrap();
+        assert_eq!(emu.regs.vx[0], 0x05);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.op_add_immediate(0x7005).unwrap();
+        assert_eq!(emu.regs.vx[0], 0xa);
+        assert_eq!(emu.regs.pc, 4);
+
+        // Test overflow
+        emu.regs.vx[0xe] = 0x3;
+        emu.op_add_immediate(0x7eff).unwrap();
+        assert_eq!(emu.regs.vx[0xe], 0x2);
+        assert_eq!(emu.regs.pc, 6);
+    }
+
+    #[test]
+    fn test_op_load_index() {
+        let mut emu = Emu::new();
+        emu.op_load_index(0xafff).unwrap();
+        assert_eq!(emu.regs.i, 0xfff);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.op_load_index(0xa000).unwrap();
+        assert_eq!(emu.regs.i, 0x000);
+        assert_eq!(emu.regs.pc, 4);
+    }
+
+    // #[test]
+    // fn test_op_display() {
+    //     let mut emu = Emu::new();
+    //     // TODO:
+    //     assert_eq!(emu.regs.pc, 2);
+    // }
+
+    #[test]
+    fn test_op_load_sprite() {
+        let mut emu = Emu::new();
+        for i in 0..16 {
+            emu.regs.vx[0] = i as u8;
+            emu.op_load_sprite(0xf029).unwrap();
+            assert_eq!(emu.regs.i, DEFAULT_FONT_START + i * DEFAULT_FONT_LEN);
+            assert_eq!(
+                &emu.ram[(emu.regs.i as usize)..(emu.regs.i + DEFAULT_FONT_LEN) as usize],
+                &DEFAULT_FONT[i as usize]
+            );
+            assert_eq!(emu.regs.pc, (i * 2) + 2);
+        }
     }
 }
