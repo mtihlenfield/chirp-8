@@ -417,15 +417,27 @@ impl Emu {
 
     #[inline]
     fn op_subn_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        let (res, overflowed) = self.regs.vx[vy].overflowing_sub(self.regs.vx[vx]);
+        self.regs.vx[vx] = res;
+        self.regs.vx[FLAG_REG] = if overflowed { 0 } else { 1 };
         self.incr_pc();
+
         Ok(())
     }
 
     #[inline]
     fn op_shift_left(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
+        // so that's what we're doing here as well.
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+
+        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
+        self.regs.vx[vx] = self.regs.vx[vx] << 1;
         self.incr_pc();
+
         Ok(())
     }
 
@@ -560,7 +572,13 @@ impl Emu {
 
     #[inline]
     fn op_load_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let index = self.regs.i as usize;
+
+        for i in 0..=vx {
+            self.regs.vx[i as usize] = self.ram[index + i];
+        }
+
         self.incr_pc();
         Ok(())
     }
@@ -860,6 +878,24 @@ mod tests {
     }
 
     #[test]
+    fn test_op_subn_reg() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0xc] = 7;
+        emu.regs.vx[0xd] = 10;
+        emu.op_subn_reg(0x8cd7).unwrap();
+        assert_eq!(emu.regs.vx[0xc], 3);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.regs.vx[0xc] = 9;
+        emu.regs.vx[0xd] = 3;
+        emu.op_subn_reg(0x8cd7).unwrap();
+        assert_eq!(emu.regs.vx[0xc], 250);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+    }
+
+    #[test]
     fn test_op_shift_right() {
         let mut emu = Emu::new();
 
@@ -872,6 +908,22 @@ mod tests {
         emu.regs.vx[3] = 0x3;
         emu.op_shift_right(0x8306).unwrap();
         assert_eq!(emu.regs.vx[3], 1);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+    }
+
+    #[test]
+    fn test_op_shift_left() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[3] = 0x4;
+        emu.op_shift_left(0x8306).unwrap();
+        assert_eq!(emu.regs.vx[3], 8);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.regs.vx[3] = 0x3;
+        emu.op_shift_left(0x8306).unwrap();
+        assert_eq!(emu.regs.vx[3], 6);
         assert_eq!(emu.regs.vx[FLAG_REG], 1);
     }
 
@@ -904,5 +956,26 @@ mod tests {
         emu.op_call(0x2fff).unwrap();
         assert_eq!(emu.regs.pc, 0xfff);
         assert_eq!(emu.stack.pop(), Some(0x202));
+    }
+
+    #[test]
+    fn test_op_load_regs() {
+        let mut emu = Emu::new();
+        emu.ram[0..16].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        emu.regs.i = 0;
+        emu.op_load_regs(0xff65).unwrap();
+        for i in 0..16 {
+            assert_eq!(emu.regs.vx[i as usize], i + 1);
+        }
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.reset();
+
+        emu.ram[0..16].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        emu.regs.i = 3;
+        emu.op_load_regs(0xf465).unwrap();
+        for i in 0..4 {
+            assert_eq!(emu.regs.vx[i as usize], i + 4);
+        }
     }
 }
