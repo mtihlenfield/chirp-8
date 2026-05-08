@@ -80,7 +80,6 @@ impl Error for EmuError {}
 #[derive(Default)]
 struct Registers {
     pc: u16,
-    sp: u8,
     vx: [u8; 16],
     i: u16,
     dt: u8,

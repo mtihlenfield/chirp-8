@@ -1,8 +1,3 @@
+# CHIRP-8
 
-## Build
-
-Need to install:
-
-```
-sudo apt install libxkbcommon-dev libwayland-cursor0 libwayland-dev
-```
+CHIP-8 emulator - First attempt at an emulator. Just another project I'm using to try and learn rust.
