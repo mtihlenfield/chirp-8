@@ -11,6 +11,8 @@ pub const UNRESERVED_START: u16 = 0x200;
 pub const DEFAULT_FONT_START: u16 = 0x0;
 pub const DEFAULT_FONT_LEN: u16 = 0x5;
 
+const FLAG_REG: usize = 0xf;
+
 #[cfg(test)]
 pub const RESERVED_END: u16 = 0x1ff;
 
@@ -176,7 +178,8 @@ impl Emu {
             0x8 => match opcode & 0x000f {
                 0x0 => self.op_load_reg(opcode),
                 0x1 => self.op_or(opcode),
-                0x2 => self.op_xor(opcode),
+                0x2 => self.op_and(opcode),
+                0x3 => self.op_xor(opcode),
                 0x4 => self.op_add_reg(opcode),
                 0x5 => self.op_sub_reg(opcode),
                 0x6 => self.op_shift_right(opcode),
@@ -257,7 +260,14 @@ impl Emu {
 
     #[inline]
     fn op_skip_equal_immediate(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = (opcode & 0x0f00) >> 8;
+        let val = opcode & 0x00ff;
+
+        if self.regs.vx[vx as usize] == (val as u8) {
+            self.regs.pc += 4;
+        } else {
+            self.incr_pc();
+        }
         Ok(())
     }
 
@@ -276,13 +286,29 @@ impl Emu {
 
     #[inline]
     fn op_skip_equal_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = (opcode & 0x0f00) >> 8;
+        let vy = (opcode & 0x00f0) >> 4;
+
+        if self.regs.vx[vx as usize] == self.regs.vx[vy as usize] {
+            self.regs.pc += 4;
+        } else {
+            self.incr_pc();
+        }
+
         Ok(())
     }
 
     #[inline]
     fn op_skip_not_equal_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = (opcode & 0x0f00) >> 8;
+        let vy = (opcode & 0x00f0) >> 4;
+
+        if self.regs.vx[vx as usize] != self.regs.vx[vy as usize] {
+            self.regs.pc += 4;
+        } else {
+            self.incr_pc();
+        }
+
         Ok(())
     }
 
@@ -308,49 +334,99 @@ impl Emu {
 
     #[inline]
     fn op_add_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        let (res, overflowed) = self.regs.vx[vx].overflowing_add(self.regs.vx[vy]);
+        self.regs.vx[vx] = res;
+        self.regs.vx[FLAG_REG] = if overflowed { 1 } else { 0 };
+        self.incr_pc();
+
         Ok(())
     }
 
     #[inline]
     fn op_load_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        self.regs.vx[vx] = self.regs.vx[vy];
+
+        self.incr_pc();
+
         Ok(())
     }
 
     #[inline]
     fn op_or(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        self.regs.vx[vx] |= self.regs.vx[vy];
+
+        self.incr_pc();
+        Ok(())
+    }
+
+    #[inline]
+    fn op_and(&mut self, opcode: u16) -> Result<(), EmuError> {
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        self.regs.vx[vx] &= self.regs.vx[vy];
+
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_xor(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        self.regs.vx[vx] ^= self.regs.vx[vy];
+
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_sub_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
+
+        let (res, overflowed) = self.regs.vx[vx].overflowing_sub(self.regs.vx[vy]);
+        self.regs.vx[vx] = res;
+        self.regs.vx[FLAG_REG] = if overflowed { 0 } else { 1 };
+        self.incr_pc();
+
         Ok(())
     }
 
     #[inline]
     fn op_shift_right(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
+        // so that's what we're doing here as well.
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+
+        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
+        self.regs.vx[vx] = self.regs.vx[vx] >> 1;
+        self.incr_pc();
+
         Ok(())
     }
 
     #[inline]
     fn op_subn_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_shift_left(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
@@ -366,12 +442,14 @@ impl Emu {
     #[inline]
     fn op_jump_plus(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_random(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
@@ -394,9 +472,9 @@ impl Emu {
 
                 let state = (row >> i) & 1;
                 if state == 1 && self.frame_buff[idx] == 1 {
-                    self.regs.vx[0xf] = 1;
+                    self.regs.vx[FLAG_REG] = 1;
                 } else {
-                    self.regs.vx[0xf] = 0;
+                    self.regs.vx[FLAG_REG] = 0;
                 }
 
                 self.frame_buff[idx] ^= state;
@@ -412,42 +490,49 @@ impl Emu {
     #[inline]
     fn op_skip_if_key(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_skip_if_not_key(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_load_delay(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_wait_for_key(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_set_delay(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_set_sound(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_add_index(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
@@ -463,18 +548,21 @@ impl Emu {
     #[inline]
     fn op_store_bcd(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_store_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 
     #[inline]
     fn op_load_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
         // TODO:
+        self.incr_pc();
         Ok(())
     }
 }
@@ -556,31 +644,91 @@ mod tests {
     }
 
     #[test]
+    fn test_op_skip_equal_immediate() {
+        let mut emu = Emu::new();
+
+        // should skip
+        emu.op_skip_equal_immediate(0x3000).unwrap();
+        assert_eq!(emu.regs.pc, 4);
+
+        emu.reset();
+
+        // should not skip
+        emu.op_skip_equal_immediate(0x3001).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.reset();
+
+        // testing masking - should not skip
+        emu.op_skip_equal_immediate(0x3fff).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.reset();
+
+        // testing masking - should skip
+        emu.regs.vx[0xf] = 0xff;
+        emu.op_skip_equal_immediate(0x3fff).unwrap();
+        assert_eq!(emu.regs.pc, 4);
+    }
+
+    #[test]
+    fn test_op_skip_equal_reg() {
+        let mut emu = Emu::new();
+
+        // v0 == v1, should skip
+        emu.op_skip_equal_reg(0x5010).unwrap();
+        assert_eq!(emu.regs.pc, 4);
+
+        emu.reset();
+
+        // v0 != v1, should not skip
+        emu.regs.vx[0] = 0x1;
+        emu.op_skip_equal_reg(0x5010).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
     fn test_op_skip_not_equal_immediate() {
         let mut emu = Emu::new();
 
         // v0 == 0, so should not skip
-        emu.op_skip_not_equal_immediate(0xf000).unwrap();
+        emu.op_skip_not_equal_immediate(0x4000).unwrap();
         assert_eq!(emu.regs.pc, 2);
 
         emu.reset();
 
         // v0 == 0, so should skip
-        emu.op_skip_not_equal_immediate(0xf001).unwrap();
+        emu.op_skip_not_equal_immediate(0x4001).unwrap();
         assert_eq!(emu.regs.pc, 4);
 
         emu.reset();
 
         // testing masking
-        emu.op_skip_not_equal_immediate(0xffff).unwrap();
+        emu.op_skip_not_equal_immediate(0x4fff).unwrap();
         assert_eq!(emu.regs.pc, 4);
 
         emu.reset();
 
         // testing masking
         emu.regs.vx[0xf] = 0xff;
-        emu.op_skip_not_equal_immediate(0xffff).unwrap();
+        emu.op_skip_not_equal_immediate(0x4fff).unwrap();
         assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_skip_not_equal_reg() {
+        let mut emu = Emu::new();
+
+        // v0 == v1, should not skip
+        emu.op_skip_not_equal_reg(0x9010).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.reset();
+
+        // v0 != v1, should skip
+        emu.regs.vx[0] = 0x1;
+        emu.op_skip_not_equal_reg(0x9010).unwrap();
+        assert_eq!(emu.regs.pc, 4);
     }
 
     #[test]
@@ -615,6 +763,74 @@ mod tests {
     }
 
     #[test]
+    fn test_op_add_reg() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0] = 1;
+        emu.regs.vx[1] = 2;
+        emu.op_add_reg(0x8014).unwrap();
+        assert_eq!(emu.regs.vx[0], 3);
+        assert_eq!(emu.regs.pc, 2);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        emu.regs.vx[5] = 4;
+        emu.regs.vx[6] = 4;
+        emu.op_add_reg(0x8564).unwrap();
+        assert_eq!(emu.regs.vx[5], 8);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        // Test overflow
+        emu.regs.vx[5] = 3;
+        emu.regs.vx[6] = 0xff;
+        emu.op_add_reg(0x8564).unwrap();
+        assert_eq!(emu.regs.vx[5], 2);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+    }
+
+    #[test]
+    fn test_op_load_reg() {
+        let mut emu = Emu::new();
+        emu.regs.vx[7] = 1;
+        emu.regs.vx[8] = 2;
+        emu.op_load_reg(0x8780).unwrap();
+        assert_eq!(emu.regs.vx[7], 2);
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_or() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0xa] = 0xf0;
+        emu.regs.vx[0xb] = 0x03;
+        emu.op_or(0x8ab1).unwrap();
+        assert_eq!(emu.regs.vx[0xa], 0xf3);
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_and() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0xa] = 0xf4;
+        emu.regs.vx[0xb] = 0xf3;
+        emu.op_and(0x8ab2).unwrap();
+        assert_eq!(emu.regs.vx[0xa], 0xf0);
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_xor() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0xa] = 0x54;
+        emu.regs.vx[0xb] = 0x53;
+        emu.op_xor(0x8ab3).unwrap();
+        assert_eq!(emu.regs.vx[0xa], 0x7);
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
     fn test_op_load_index() {
         let mut emu = Emu::new();
         emu.op_load_index(0xafff).unwrap();
@@ -624,6 +840,40 @@ mod tests {
         emu.op_load_index(0xa000).unwrap();
         assert_eq!(emu.regs.i, 0x000);
         assert_eq!(emu.regs.pc, 4);
+    }
+
+    #[test]
+    fn test_op_sub_reg() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0xc] = 10;
+        emu.regs.vx[0xd] = 7;
+        emu.op_sub_reg(0x8cd5).unwrap();
+        assert_eq!(emu.regs.vx[0xc], 3);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.regs.vx[0xc] = 3;
+        emu.regs.vx[0xd] = 9;
+        emu.op_sub_reg(0x8cd5).unwrap();
+        assert_eq!(emu.regs.vx[0xc], 250);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+    }
+
+    #[test]
+    fn test_op_shift_right() {
+        let mut emu = Emu::new();
+
+        emu.regs.vx[3] = 0x4;
+        emu.op_shift_right(0x8306).unwrap();
+        assert_eq!(emu.regs.vx[3], 2);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.regs.vx[3] = 0x3;
+        emu.op_shift_right(0x8306).unwrap();
+        assert_eq!(emu.regs.vx[3], 1);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
     }
 
     // #[test]
