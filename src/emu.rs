@@ -34,18 +34,14 @@ const DEFAULT_FONT: [[u8; 5]; 16] = [
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum EmuError {
-    // Invalid address
     AddressError(u16),
     // Unable to load data of size .1 at addr .0 - too large
     LoadError(u16, u16),
-    // Invalid instruction .1 at .0
-    InvalidInstruction(u16, u16),
+    InvalidInstruction(u16),
     // Attempt to push more than STACK_SIZE values to stack at addr
     StackOverflowError(u16),
     // Attempt to pop from an empty stack at addr
     StackUnderflowError(u16),
-    // Attempt to access an invalid general purpose register
-    InvalidReg(u8),
 }
 
 // TODO: macros for pulling out vx, vy, nibble, and byte
@@ -63,8 +59,8 @@ impl Display for EmuError {
                     size, addr
                 )
             }
-            Self::InvalidInstruction(addr, instr) => {
-                write!(f, "Invalid instruction 0x{:x} at 0x{:x}", instr, addr)
+            Self::InvalidInstruction(instr) => {
+                write!(f, "Invalid instruction 0x{:x}", instr)
             }
             Self::StackOverflowError(addr) => {
                 write!(f, "Stack overflow error at 0x{:x}", addr)
@@ -72,20 +68,27 @@ impl Display for EmuError {
             Self::StackUnderflowError(addr) => {
                 write!(f, "Attempt to pop from empty stack at 0x{:x}", addr)
             }
-            Self::InvalidReg(idx) => {
-                write!(
-                    f,
-                    "Attempt to access an invalid general purpose register: 0x{:x}",
-                    idx
-                )
-            }
         }
     }
 }
 
 impl Error for EmuError {}
 
-#[derive(Default)]
+#[derive(Debug)]
+pub struct EmuErrorWithCtx {
+    error: EmuError,
+    ctx: Registers,
+}
+
+impl Error for EmuErrorWithCtx {}
+
+impl Display for EmuErrorWithCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Err: {}, Context: {:?}", self.error, self.ctx)
+    }
+}
+
+#[derive(Default, Clone, Debug)]
 struct Registers {
     pc: u16,
     vx: [u8; 16],
@@ -201,21 +204,21 @@ impl Emu {
         Ok(())
     }
 
-    pub fn step(&mut self) -> Result<(), EmuError> {
-        // TODO: would be cool to catch individual errors and the wrap them in a higher level error
-        // which included the current emulator regs
-
+    pub fn step(&mut self) -> Result<(), EmuErrorWithCtx> {
         let pc = self.regs.pc;
-        let opcode = self.ram.read_u16(pc)?;
+        let opcode = self.ram.read_u16(pc).map_err(|e| EmuErrorWithCtx {
+            error: e,
+            ctx: self.regs.clone(),
+        })?;
 
         // println!("0x{:x}: {:x}", pc, opcode);
 
         self.regs.pc += 2;
-        match (opcode & 0xf000) >> 12 {
+        let res = match (opcode & 0xf000) >> 12 {
             0x0 => match opcode {
                 0x00e0 => self.op_cls(),
                 0x00ee => self.op_ret(),
-                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+                _ => Err(EmuError::InvalidInstruction(opcode)),
             },
             0x1 => self.op_jump(opcode),
             0x2 => self.op_call(opcode),
@@ -234,7 +237,7 @@ impl Emu {
                 0x6 => self.op_shift_right(opcode),
                 0x7 => self.op_subn_reg(opcode),
                 0xe => self.op_shift_left(opcode),
-                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+                _ => Err(EmuError::InvalidInstruction(opcode)),
             },
             0x9 => self.op_skip_not_equal_reg(opcode),
             0xa => self.op_load_index(opcode),
@@ -244,7 +247,7 @@ impl Emu {
             0xe => match opcode & 0x00ff {
                 0x9e => self.op_skip_if_key(opcode),
                 0xa1 => self.op_skip_if_not_key(opcode),
-                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+                _ => Err(EmuError::InvalidInstruction(opcode)),
             },
             0xf => match opcode & 0x00ff {
                 0x07 => self.op_load_delay(opcode),
@@ -256,9 +259,17 @@ impl Emu {
                 0x33 => self.op_store_bcd(opcode),
                 0x55 => self.op_store_regs(opcode),
                 0x65 => self.op_load_regs(opcode),
-                _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+                _ => Err(EmuError::InvalidInstruction(opcode)),
             },
-            _ => Err(EmuError::InvalidInstruction(pc, opcode)),
+            _ => Err(EmuError::InvalidInstruction(opcode)),
+        };
+
+        if let Err(e) = res {
+            let mut ctx = self.regs.clone();
+            ctx.pc = pc;
+            Err(EmuErrorWithCtx { error: e, ctx: ctx })
+        } else {
+            Ok(())
         }
     }
 

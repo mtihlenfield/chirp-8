@@ -148,34 +148,35 @@ fn main() {
 
     let mut app = App::default();
 
-    // v0 = sprite index
-    // v1 = col
-    // v2 = row
-    // let program: [u8; 32] = [
-    //     0x60, 0x01, // Load the index of the hex sprite in to v0
-    //     0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
-    //     0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
-    //     0xf0, 0x29, // Set I to the sprite V0
-    //     0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
-    //     0x70, 0x01, // bump v0 to the next index
-    //     0x40, 0x11, // skip the next instr if  v0 =! 17
-    //     0x12, 0x1e, // jump to the infinite loop
-    //     0x40, 0x0a, // skip the next instr if v0 =! 10
-    //     0x12, 0x18, // jump 4 instrs forward (0x218)
-    //     0x71, 0x05, // move the col over to the next char
-    //     0x12, 0x04, // Loop back to the point where we set I and start again
-    //     0x72, 0x06, // incr v2 by 6 (chars are 5 rows, add 1 row for spacing)
-    //     0x61, 0x00, // set v1 to 0
-    //     0x12, 0x06, // Loop back to the point where we set I and start again
-    //     0x12, 0x1e, // Loop forever
-    // ];
-
     let mut args = env::args();
     args.next();
 
     let program = if let Some(path) = args.next() {
         std::fs::read(path).unwrap()
     } else {
+        // v0 = sprite index
+        // v1 = col
+        // v2 = row
+        // [
+        //     0x60, 0x01, // Load the index of the hex sprite in to v0
+        //     0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
+        //     0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
+        //     0xf0, 0x29, // Set I to the sprite V0
+        //     0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
+        //     0x70, 0x01, // bump v0 to the next index
+        //     0x40, 0x11, // skip the next instr if  v0 =! 17
+        //     0x12, 0x1e, // jump to the infinite loop
+        //     0x40, 0x0a, // skip the next instr if v0 =! 10
+        //     0x12, 0x18, // jump 4 instrs forward (0x218)
+        //     0x71, 0x05, // move the col over to the next char
+        //     0x12, 0x04, // Loop back to the point where we set I and start again
+        //     0x72, 0x06, // incr v2 by 6 (chars are 5 rows, add 1 row for spacing)
+        //     0x61, 0x00, // set v1 to 0
+        //     0x12, 0x06, // Loop back to the point where we set I and start again
+        //     0x12, 0x1e, // Loop forever
+        // ]
+        // .to_vec()
+
         [
             0x60, 0x0f, // Load the index of the hex sprite in to v0
             0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
