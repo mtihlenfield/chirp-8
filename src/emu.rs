@@ -99,6 +99,10 @@ impl Default for Emu {
     }
 }
 
+// TODO: I should really do ram/read writes through a method that checks
+// the address so that I don't have to remember to check the address in every
+// call. Maybe even add a struct with a non public member
+
 impl Emu {
     pub fn new() -> Emu {
         let mut emu = Emu {
@@ -382,18 +386,6 @@ impl Emu {
     }
 
     #[inline]
-    fn op_shift_right(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
-        // so that's what we're doing here as well.
-        let vx = ((opcode & 0x0f00) >> 8) as usize;
-
-        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
-        self.regs.vx[vx] = self.regs.vx[vx] >> 1;
-
-        Ok(())
-    }
-
-    #[inline]
     fn op_subn_reg(&mut self, opcode: u16) -> Result<(), EmuError> {
         let vx = ((opcode & 0x0f00) >> 8) as usize;
         let vy = ((opcode & 0x00f0) >> 4) as usize;
@@ -401,6 +393,18 @@ impl Emu {
         let (res, overflowed) = self.regs.vx[vy].overflowing_sub(self.regs.vx[vx]);
         self.regs.vx[vx] = res;
         self.regs.vx[FLAG_REG] = if overflowed { 0 } else { 1 };
+
+        Ok(())
+    }
+
+    #[inline]
+    fn op_shift_right(&mut self, opcode: u16) -> Result<(), EmuError> {
+        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
+        // so that's what we're doing here as well.
+        let vx = ((opcode & 0x0f00) >> 8) as usize;
+
+        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
+        self.regs.vx[vx] = self.regs.vx[vx] >> 1;
 
         Ok(())
     }
@@ -526,7 +530,16 @@ impl Emu {
 
     #[inline]
     fn op_store_bcd(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // TODO:
+        let vx = (opcode & 0x0f00) >> 8;
+        let val = self.regs.vx[vx as usize];
+        let index = self.regs.i as usize;
+
+        if !is_valid_addr(index as u16) {
+            return Err(EmuError::AddressError(index as u16));
+        }
+
+        self.ram[index..index + 3].copy_from_slice(&[val / 100, (val / 10) % 10, val % 10]);
+
         Ok(())
     }
 
@@ -941,7 +954,41 @@ mod tests {
 
     #[test]
     fn test_add_index() {
-        // TODO: implement
-        // TODO: make sure to test overflow
+        let mut emu = Emu::new();
+
+        emu.regs.vx[0] = 1;
+        emu.op_add_index(0xf01e).unwrap();
+        assert_eq!(emu.regs.i, 1);
+
+        emu.regs.vx[5] = 4;
+        emu.op_add_index(0xf51e).unwrap();
+        assert_eq!(emu.regs.i, 5);
+
+        // Test overflow
+        emu.regs.i = 0xfffe;
+        emu.regs.vx[6] = 0x3;
+        emu.op_add_index(0xf61e).unwrap();
+        assert_eq!(emu.regs.i, 1);
+    }
+
+    #[test]
+    fn test_op_store_bcd() {
+        let mut emu = Emu::new();
+        emu.regs.vx[0] = 123;
+        emu.op_store_bcd(0xf033).unwrap();
+        assert_eq!(emu.ram[..3], [1, 2, 3]);
+
+        emu.regs.vx[0] = 255;
+        emu.op_store_bcd(0xf033).unwrap();
+        assert_eq!(emu.ram[..3], [2, 5, 5]);
+
+        emu.regs.vx[0] = 000;
+        emu.op_store_bcd(0xf033).unwrap();
+        assert_eq!(emu.ram[..3], [0, 0, 0]);
+
+        emu.regs.vx[7] = 205;
+        emu.regs.i = 0x10;
+        emu.op_store_bcd(0xf733).unwrap();
+        assert_eq!(emu.ram[0x10..0x13], [2, 0, 5]);
     }
 }
