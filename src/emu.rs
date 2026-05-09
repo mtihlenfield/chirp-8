@@ -399,24 +399,32 @@ impl Emu {
 
     #[inline]
     fn op_shift_right(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
-        // so that's what we're doing here as well.
+        // NOTE: some emulators do vx = vx >> 1. I'm using vx = vy >> 1 because that's what octo
+        // does
         let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
 
-        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
-        self.regs.vx[vx] = self.regs.vx[vx] >> 1;
+        let flag = self.regs.vx[vy] & 1;
+        self.regs.vx[vx] = self.regs.vx[vy] >> 1;
+
+        // Important that we're setting vF after the above shift - this allows you to use vF as vY
+        self.regs.vx[FLAG_REG] = flag;
 
         Ok(())
     }
 
     #[inline]
     fn op_shift_left(&mut self, opcode: u16) -> Result<(), EmuError> {
-        // NOTE: some emulators do vx = vx >> vy. Most modern emulators ignore vy and shift by 1,
-        // so that's what we're doing here as well.
+        // NOTE: some emulators do vx = vx << 1. I'm using vx = vy << 1 because that's what octo
+        // does
         let vx = ((opcode & 0x0f00) >> 8) as usize;
+        let vy = ((opcode & 0x00f0) >> 4) as usize;
 
-        self.regs.vx[FLAG_REG] = self.regs.vx[vx] & 1;
-        self.regs.vx[vx] = self.regs.vx[vx] << 1;
+        let flag = (self.regs.vx[vy] & 0x80) >> 7;
+        self.regs.vx[vx] = self.regs.vx[vy] << 1;
+
+        // Important that we're setting vF after the above shift - this allows you to use vF as vY
+        self.regs.vx[FLAG_REG] = flag;
 
         Ok(())
     }
@@ -856,13 +864,33 @@ mod tests {
     fn test_op_shift_right() {
         let mut emu = Emu::new();
 
-        emu.regs.vx[3] = 0x4;
-        emu.op_shift_right(0x8306).unwrap();
+        // Basic shift - flag should not be set
+        emu.regs.vx[4] = 0x4;
+        emu.op_shift_right(0x8346).unwrap();
         assert_eq!(emu.regs.vx[3], 2);
         assert_eq!(emu.regs.vx[FLAG_REG], 0);
 
-        emu.regs.vx[3] = 0x3;
+        // Basic shift - flag should be set
+        emu.regs.vx[0] = 0x3;
         emu.op_shift_right(0x8306).unwrap();
+        assert_eq!(emu.regs.vx[3], 1);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        // Test shift self
+        emu.regs.vx[3] = 0x3;
+        emu.op_shift_right(0x8336).unwrap();
+        assert_eq!(emu.regs.vx[3], 1);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        // Test shift with flag reg (no carry)
+        emu.regs.vx[0xf] = 0x4;
+        emu.op_shift_right(0x83f6).unwrap();
+        assert_eq!(emu.regs.vx[3], 2);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        // Test shift with flag reg (with carry)
+        emu.regs.vx[0xf] = 0x3;
+        emu.op_shift_right(0x83f6).unwrap();
         assert_eq!(emu.regs.vx[3], 1);
         assert_eq!(emu.regs.vx[FLAG_REG], 1);
     }
@@ -871,14 +899,34 @@ mod tests {
     fn test_op_shift_left() {
         let mut emu = Emu::new();
 
-        emu.regs.vx[3] = 0x4;
-        emu.op_shift_left(0x8306).unwrap();
+        // Basic shift - flag should not be set
+        emu.regs.vx[4] = 0x4;
+        emu.op_shift_left(0x8346).unwrap();
         assert_eq!(emu.regs.vx[3], 8);
         assert_eq!(emu.regs.vx[FLAG_REG], 0);
 
-        emu.regs.vx[3] = 0x3;
-        emu.op_shift_left(0x8306).unwrap();
-        assert_eq!(emu.regs.vx[3], 6);
+        // Basic shift - flag should be set
+        emu.regs.vx[4] = 0x81;
+        emu.op_shift_left(0x8346).unwrap();
+        assert_eq!(emu.regs.vx[3], 0x2);
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        // Test shift self
+        emu.regs.vx[4] = 0x4;
+        emu.op_shift_left(0x8446).unwrap();
+        assert_eq!(emu.regs.vx[4], 8);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        // Test shift with flag reg (no carry)
+        emu.regs.vx[0xf] = 0x3;
+        emu.op_shift_left(0x84f6).unwrap();
+        assert_eq!(emu.regs.vx[4], 6);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        // Test shift with flag reg (with carry)
+        emu.regs.vx[0xf] = 0x81;
+        emu.op_shift_left(0x84f6).unwrap();
+        assert_eq!(emu.regs.vx[4], 0x2);
         assert_eq!(emu.regs.vx[FLAG_REG], 1);
     }
 
