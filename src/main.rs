@@ -74,7 +74,7 @@ impl<'win> ApplicationHandler for App<'win> {
             event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("CHIP-8")
+                        .with_title("CHIRP-8")
                         .with_inner_size(winit::dpi::LogicalSize::new(
                             (emu::DISPLAY_COLS as u32) * SCALE,
                             (emu::DISPLAY_ROWS as u32) * SCALE,
@@ -103,8 +103,10 @@ impl<'win> ApplicationHandler for App<'win> {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                // TODO: one instruction per redraw is very slow.
-                self.emu.step().expect("Program step failed!");
+                // TODO: Need to figure out a better way of handling instruction cycles.
+                for _ in 0..100 {
+                    self.emu.step().expect("Program step failed!");
+                }
 
                 let emu_frame_buff = self.emu.frame_buffer();
 
