@@ -44,6 +44,8 @@ pub enum EmuError {
     StackOverflowError(u16),
     // Attempt to pop from an empty stack at addr
     StackUnderflowError(u16),
+    // Attempt to access an invalid general purpose register
+    InvalidReg(u8),
 }
 
 // TODO: macros for pulling out vx, vy, nibble, and byte
@@ -70,6 +72,13 @@ impl Display for EmuError {
             Self::StackUnderflowError(addr) => {
                 write!(f, "Attempt to pop from empty stack at 0x{:x}", addr)
             }
+            Self::InvalidReg(idx) => {
+                write!(
+                    f,
+                    "Attempt to access an invalid general purpose register: 0x{:x}",
+                    idx
+                )
+            }
         }
     }
 }
@@ -85,11 +94,55 @@ struct Registers {
     st: u8,
 }
 
+// TODO: get_v method for reg that takes a u8 and checks the index;
+
+struct Ram {
+    ram: Vec<u8>,
+}
+
+impl Ram {
+    fn default() -> Ram {
+        Ram {
+            ram: vec![0; RAM_SIZE as usize],
+        }
+    }
+
+    fn read(&self, addr: u16) -> Result<u8, EmuError> {
+        self.ram
+            .get(addr as usize)
+            .copied()
+            .ok_or(EmuError::AddressError(addr))
+    }
+
+    fn read_u16(&self, addr: u16) -> Result<u16, EmuError> {
+        let bytes = [self.read(addr)?, self.read(addr + 1)?];
+        Ok(u16::from_be_bytes(bytes))
+    }
+
+    fn read_slice(&self, addr: u16, num_bytes: u16) -> Result<&[u8], EmuError> {
+        check_addr_range(addr, num_bytes)?;
+
+        Ok(&self.ram[(addr as usize)..(addr + num_bytes) as usize])
+    }
+
+    fn write_slice(&mut self, addr: u16, data: &[u8]) -> Result<(), EmuError> {
+        // TODO: is there a better way to handle this length conversion?
+        check_addr_range(addr, data.len() as u16)?;
+
+        self.ram[(addr as usize)..((addr as usize) + data.len())].copy_from_slice(data);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn clear(&mut self) {
+        self.ram.fill(0);
+    }
+}
+
 pub struct Emu {
     regs: Registers,
-    ram: Vec<u8>,
+    ram: Ram,
     stack: Vec<u16>,
-
     frame_buff: Vec<u8>,
 }
 
@@ -99,15 +152,11 @@ impl Default for Emu {
     }
 }
 
-// TODO: I should really do ram/read writes through a method that checks
-// the address so that I don't have to remember to check the address in every
-// call. Maybe even add a struct with a non public member
-
 impl Emu {
     pub fn new() -> Emu {
         let mut emu = Emu {
             regs: Registers::default(),
-            ram: vec![0; RAM_SIZE as usize],
+            ram: Ram::default(),
             stack: Vec::with_capacity(STACK_SIZE as usize),
             frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
         };
@@ -115,7 +164,9 @@ impl Emu {
         let mut addr = 0x0;
         for sprite in DEFAULT_FONT {
             let len = sprite.len();
-            emu.ram[addr..addr + len].copy_from_slice(&sprite);
+            emu.ram
+                .write_slice(addr as u16, &sprite)
+                .expect("Failed to load default font in to memory.");
             addr += len;
         }
 
@@ -125,7 +176,7 @@ impl Emu {
     #[cfg(test)]
     pub fn reset(&mut self) {
         self.regs = Registers::default();
-        self.ram.fill(0);
+        self.ram.clear();
         self.stack.fill(0);
         self.frame_buff.fill(0);
     }
@@ -139,9 +190,7 @@ impl Emu {
             return Err(EmuError::LoadError(addr, data.len() as u16));
         }
 
-        self.ram[(addr as usize)..(addr as usize) + data.len()].copy_from_slice(&data);
-
-        Ok(())
+        self.ram.write_slice(addr, &data)
     }
 
     pub fn jump(&mut self, addr: u16) -> Result<(), EmuError> {
@@ -155,13 +204,12 @@ impl Emu {
     }
 
     pub fn step(&mut self) -> Result<(), EmuError> {
-        let pc = self.regs.pc;
-        if !is_valid_addr(pc) {
-            // TODO: ideally would check pc + 1 too
-            return Err(EmuError::AddressError(pc));
-        }
+        // TODO: would be cool to catch individual errors and the wrap them in a higher level error
+        // which included the current emulator regs
 
-        let opcode = u16::from_be_bytes([self.ram[pc as usize], self.ram[(pc + 1) as usize]]);
+        let pc = self.regs.pc;
+        let opcode = self.ram.read_u16(pc)?;
+
         // println!("0x{:x}: {:x}", pc, opcode);
 
         self.regs.pc += 2;
@@ -453,12 +501,8 @@ impl Emu {
     fn op_display(&mut self, opcode: u16) -> Result<(), EmuError> {
         let x_pixel = self.regs.vx[((opcode & 0x0f00) >> 8) as usize];
         let y_pixel = self.regs.vx[((opcode & 0x00f0) >> 4) as usize];
-        let num_bytes = (opcode & 0x000f) as usize;
-        if !is_valid_addr(self.regs.i) {
-            return Err(EmuError::AddressError(self.regs.i));
-        }
-        let sprite_addr = self.regs.i as usize;
-        let sprite_bytes = &self.ram[sprite_addr..(sprite_addr + num_bytes)];
+        let num_bytes = opcode & 0x000f;
+        let sprite_bytes = self.ram.read_slice(self.regs.i, num_bytes)?;
 
         // TODO: This is pretty dirty but it works. There is surely a faster way to do this with bit manipulation
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
@@ -540,41 +584,21 @@ impl Emu {
     fn op_store_bcd(&mut self, opcode: u16) -> Result<(), EmuError> {
         let vx = (opcode & 0x0f00) >> 8;
         let val = self.regs.vx[vx as usize];
-        let index = self.regs.i as usize;
-
-        if !is_valid_addr(index as u16) {
-            return Err(EmuError::AddressError(index as u16));
-        }
-
-        self.ram[index..index + 3].copy_from_slice(&[val / 100, (val / 10) % 10, val % 10]);
-
-        Ok(())
+        self.ram
+            .write_slice(self.regs.i, &[val / 100, (val / 10) % 10, val % 10])
     }
 
     #[inline]
     fn op_store_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
         let vx = ((opcode & 0x0f00) >> 8) as usize;
-        let index = self.regs.i as usize;
-
-        if !is_valid_addr(index as u16) {
-            return Err(EmuError::AddressError(index as u16));
-        }
-
-        self.ram[index..=(index + vx)].copy_from_slice(&self.regs.vx[0..=vx]);
-
-        Ok(())
+        self.ram.write_slice(self.regs.i, &self.regs.vx[0..=vx])
     }
 
     #[inline]
     fn op_load_regs(&mut self, opcode: u16) -> Result<(), EmuError> {
-        let vx = ((opcode & 0x0f00) >> 8) as usize;
-        let index = self.regs.i as usize;
-
-        if !is_valid_addr(index as u16) {
-            return Err(EmuError::AddressError(index as u16));
-        }
-
-        self.regs.vx[0..=vx].copy_from_slice(&self.ram[index..=(index + vx)]);
+        let vx = ((opcode & 0x0f00) >> 8) as u16;
+        let vals = self.ram.read_slice(self.regs.i, vx + 1)?;
+        self.regs.vx[0..=(vx as usize)].copy_from_slice(vals);
 
         Ok(())
     }
@@ -584,9 +608,103 @@ fn is_valid_addr(addr: u16) -> bool {
     addr < RAM_SIZE
 }
 
+fn check_addr_range(addr: u16, num_bytes: u16) -> Result<(), EmuError> {
+    if !is_valid_addr(addr) {
+        return Err(EmuError::AddressError(addr));
+    }
+
+    if !is_valid_addr(addr + num_bytes) {
+        // This is the first invalid address of the range
+        return Err(EmuError::AddressError(RAM_SIZE));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ram_read() {
+        let mut ram = Ram::default();
+
+        assert_eq!(
+            ram.read(RAM_SIZE + 5).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE + 5)
+        );
+
+        assert_eq!(
+            ram.read(RAM_SIZE).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE)
+        );
+
+        ram.ram[(RAM_SIZE - 1) as usize] = 0xf;
+        assert_eq!(ram.read(RAM_SIZE - 1).unwrap(), 0xf);
+
+        ram.ram[0] = 0xa;
+        assert_eq!(ram.read(0).unwrap(), 0xa);
+
+        ram.ram[255] = 0xe;
+        assert_eq!(ram.read(255).unwrap(), 0xe);
+    }
+
+    #[test]
+    fn test_ram_read_u16() {
+        let mut ram = Ram::default();
+        ram.ram[0] = 0x83;
+        ram.ram[1] = 0x45;
+        assert_eq!(ram.read_u16(0x0).unwrap(), 0x8345);
+
+        assert_eq!(
+            ram.read_u16(RAM_SIZE - 1).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE)
+        );
+    }
+
+    #[test]
+    fn test_ram_read_slice() {
+        let mut ram = Ram::default();
+        ram.ram[0] = 0x83;
+        ram.ram[1] = 0x45;
+        ram.ram[2] = 0x56;
+        ram.ram[3] = 0xff;
+        ram.ram[4] = 0xfe;
+
+        assert_eq!(ram.read_slice(0, 3).unwrap(), &[0x83, 0x45, 0x56]);
+        assert_eq!(ram.read_slice(3, 2).unwrap(), &[0xff, 0xfe]);
+
+        assert_eq!(
+            ram.read_slice(RAM_SIZE + 5, 5).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE + 5)
+        );
+
+        assert_eq!(
+            ram.read_slice(RAM_SIZE - 1, 5).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE)
+        );
+    }
+
+    #[test]
+    fn test_ram_write_slice() {
+        let mut ram = Ram::default();
+
+        ram.write_slice(0, &[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(ram.ram[..5], [1, 2, 3, 4, 5]);
+
+        ram.write_slice(0x10, &[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(ram.ram[0x10..0x15], [1, 2, 3, 4, 5]);
+
+        assert_eq!(
+            ram.write_slice(RAM_SIZE, &[1, 2, 3]).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE)
+        );
+
+        assert_eq!(
+            ram.write_slice(RAM_SIZE - 1, &[1, 2, 3]).unwrap_err(),
+            EmuError::AddressError(RAM_SIZE)
+        );
+    }
 
     #[test]
     fn test_invalid_load_addr() {
@@ -944,7 +1062,7 @@ mod tests {
             emu.op_load_sprite(0xf029).unwrap();
             assert_eq!(emu.regs.i, DEFAULT_FONT_START + i * DEFAULT_FONT_LEN);
             assert_eq!(
-                &emu.ram[(emu.regs.i as usize)..(emu.regs.i + DEFAULT_FONT_LEN) as usize],
+                emu.ram.read_slice(emu.regs.i, DEFAULT_FONT_LEN).unwrap(),
                 &DEFAULT_FONT[i as usize]
             );
         }
@@ -966,7 +1084,7 @@ mod tests {
         emu.regs.i = 0;
         emu.op_store_regs(0xff55).unwrap();
         for i in 0..16 {
-            assert_eq!(emu.ram[i as usize], i + 1);
+            assert_eq!(emu.ram.read(i).unwrap(), (i + 1) as u8);
         }
 
         emu.reset();
@@ -976,14 +1094,18 @@ mod tests {
         emu.regs.i = 3;
         emu.op_store_regs(0xf455).unwrap();
 
-        let index = emu.regs.i as usize;
-        assert_eq!(emu.ram[index..=(index + 4)], [1, 2, 3, 4, 5]);
+        assert_eq!(emu.ram.read_slice(emu.regs.i, 5).unwrap(), &[1, 2, 3, 4, 5]);
     }
 
     #[test]
     fn test_op_load_regs() {
         let mut emu = Emu::new();
-        emu.ram[0..16].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        emu.ram
+            .write_slice(
+                0x0,
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            )
+            .unwrap();
         emu.regs.i = 0;
         emu.op_load_regs(0xff65).unwrap();
         for i in 0..16 {
@@ -992,7 +1114,12 @@ mod tests {
 
         emu.reset();
 
-        emu.ram[0..16].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        emu.ram
+            .write_slice(
+                0x0,
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+            )
+            .unwrap();
         emu.regs.i = 3;
         emu.op_load_regs(0xf465).unwrap();
         for i in 0..4 {
@@ -1024,19 +1151,19 @@ mod tests {
         let mut emu = Emu::new();
         emu.regs.vx[0] = 123;
         emu.op_store_bcd(0xf033).unwrap();
-        assert_eq!(emu.ram[..3], [1, 2, 3]);
+        assert_eq!(emu.ram.read_slice(0, 3).unwrap(), &[1, 2, 3]);
 
         emu.regs.vx[0] = 255;
         emu.op_store_bcd(0xf033).unwrap();
-        assert_eq!(emu.ram[..3], [2, 5, 5]);
+        assert_eq!(emu.ram.read_slice(0, 3).unwrap(), [2, 5, 5]);
 
         emu.regs.vx[0] = 000;
         emu.op_store_bcd(0xf033).unwrap();
-        assert_eq!(emu.ram[..3], [0, 0, 0]);
+        assert_eq!(emu.ram.read_slice(0, 3).unwrap(), [0, 0, 0]);
 
         emu.regs.vx[7] = 205;
         emu.regs.i = 0x10;
         emu.op_store_bcd(0xf733).unwrap();
-        assert_eq!(emu.ram[0x10..0x13], [2, 0, 5]);
+        assert_eq!(emu.ram.read_slice(0x10, 3).unwrap(), [2, 0, 5]);
     }
 }
