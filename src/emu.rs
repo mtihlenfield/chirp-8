@@ -94,8 +94,6 @@ struct Registers {
     st: u8,
 }
 
-// TODO: get_v method for reg that takes a u8 and checks the index;
-
 struct Ram {
     ram: Vec<u8>,
 }
