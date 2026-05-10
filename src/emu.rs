@@ -485,7 +485,7 @@ impl Emu {
 
     #[inline]
     fn op_jump_plus(&mut self, addr: u16) -> Result<(), EmuError> {
-        // TODO:
+        self.regs.pc = addr + self.regs.vx[0] as u16;
         Ok(())
     }
 
@@ -1131,5 +1131,27 @@ mod tests {
         emu.regs.i = 0x10;
         emu.op_store_bcd(7).unwrap();
         assert_eq!(emu.ram.read_slice(0x10, 3).unwrap(), [2, 0, 5]);
+    }
+
+    #[test]
+    fn test_op_jump_plus() {
+        let mut emu = Emu::new();
+        emu.op_jump_plus(0xfff).unwrap();
+        assert_eq!(emu.regs.pc, 0xfff);
+
+        emu.reset();
+
+        emu.regs.vx[0] = 5;
+        emu.op_jump_plus(0x005).unwrap();
+        assert_eq!(emu.regs.pc, 10);
+
+        emu.reset();
+
+        // The PC is 16bit so it wouldn't overflow on an add like this. It's not super
+        // clear how the emu should handle it when the PC is greater than 12 bits (should it
+        // ignore the most significant nibble?) but that isn't op_jump_plus's responsibility
+        emu.regs.vx[0] = 5;
+        emu.op_jump_plus(0xfff).unwrap();
+        assert_eq!(emu.regs.pc, 0x1004);
     }
 }
