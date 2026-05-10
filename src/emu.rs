@@ -1,3 +1,4 @@
+use rand::random;
 use std::error::Error;
 use std::fmt::Display;
 
@@ -490,8 +491,8 @@ impl Emu {
     }
 
     #[inline]
-    fn op_random(&mut self, vx: u8, val: u8) -> Result<(), EmuError> {
-        // TODO:
+    fn op_random(&mut self, vx: u8, mask: u8) -> Result<(), EmuError> {
+        self.regs.vx[vx as usize] = rand::random::<u8>() & mask;
         Ok(())
     }
 
@@ -1153,5 +1154,15 @@ mod tests {
         emu.regs.vx[0] = 5;
         emu.op_jump_plus(0xfff).unwrap();
         assert_eq!(emu.regs.pc, 0x1004);
+    }
+
+    #[test]
+    fn test_op_random() {
+        let mut emu = Emu::new();
+        emu.op_random(0, 0xff).unwrap();
+        assert_ne!(emu.regs.vx[0], 0);
+
+        emu.op_random(0, 0x00).unwrap();
+        assert_eq!(emu.regs.vx[0], 0);
     }
 }

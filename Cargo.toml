@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 minifb = "0.28.0"
 pixels = "0.17.1"
+rand = "0.10.1"
 winit = "0.30.13"
