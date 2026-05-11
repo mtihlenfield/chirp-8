@@ -46,6 +46,8 @@ use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard;
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{Window, WindowId};
 
 mod emu;
@@ -101,6 +103,39 @@ impl<'win> ApplicationHandler for App<'win> {
             WindowEvent::CloseRequested => {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
+            }
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } => {
+                let key = match event.key_without_modifiers().as_ref() {
+                    keyboard::Key::Character("1") => emu::Key::One,
+                    keyboard::Key::Character("2") => emu::Key::Two,
+                    keyboard::Key::Character("3") => emu::Key::Three,
+                    keyboard::Key::Character("4") => emu::Key::C,
+                    keyboard::Key::Character("q") => emu::Key::Four,
+                    keyboard::Key::Character("w") => emu::Key::Five,
+                    keyboard::Key::Character("e") => emu::Key::Six,
+                    keyboard::Key::Character("r") => emu::Key::D,
+                    keyboard::Key::Character("a") => emu::Key::Seven,
+                    keyboard::Key::Character("s") => emu::Key::Eight,
+                    keyboard::Key::Character("d") => emu::Key::Nine,
+                    keyboard::Key::Character("f") => emu::Key::E,
+                    keyboard::Key::Character("z") => emu::Key::A,
+                    keyboard::Key::Character("x") => emu::Key::Zero,
+                    keyboard::Key::Character("c") => emu::Key::B,
+                    keyboard::Key::Character("v") => emu::Key::F,
+                    _ => return,
+                };
+
+                let state = if event.state.is_pressed() {
+                    emu::KeyState::Pressed
+                } else {
+                    emu::KeyState::Released
+                };
+
+                self.emu.set_key(key, state);
             }
             WindowEvent::RedrawRequested => {
                 // TODO: Need to figure out a better way of handling instruction cycles.

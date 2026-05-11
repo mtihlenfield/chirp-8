@@ -12,6 +12,8 @@ pub const UNRESERVED_START: u16 = 0x200;
 pub const DEFAULT_FONT_START: u16 = 0x0;
 pub const DEFAULT_FONT_LEN: u16 = 0x5;
 
+const NUM_KEYS: u8 = 0x10;
+
 const FLAG_REG: usize = 0xf;
 
 const DEFAULT_FONT: [[u8; 5]; 16] = [
@@ -183,11 +185,40 @@ macro_rules! addr {
     };
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Key {
+    Zero = 0,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum KeyState {
+    Pressed,
+    Released,
+}
+
 pub struct Emu {
     regs: Registers,
     ram: Ram,
     stack: Vec<u16>,
     frame_buff: Vec<u8>,
+    key_state: Vec<KeyState>,
+    waiting_for_key: bool,
+    key_out: u8,
 }
 
 impl Default for Emu {
@@ -203,6 +234,9 @@ impl Emu {
             ram: Ram::default(),
             stack: Vec::with_capacity(STACK_SIZE as usize),
             frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
+            key_state: vec![KeyState::Released; NUM_KEYS as usize],
+            waiting_for_key: false,
+            key_out: 0,
         };
 
         let mut addr = 0x0;
@@ -223,6 +257,7 @@ impl Emu {
         self.ram.clear();
         self.stack.fill(0);
         self.frame_buff.fill(0);
+        self.key_state.fill(KeyState::Released);
     }
 
     pub fn load(&mut self, addr: u16, data: Vec<u8>) -> Result<(), EmuError> {
@@ -240,7 +275,22 @@ impl Emu {
         Ok(())
     }
 
+    pub fn set_key(&mut self, key: Key, state: KeyState) {
+        self.key_state[key as usize] = state;
+
+        if state == KeyState::Pressed && self.waiting_for_key {
+            self.waiting_for_key = false;
+            self.regs.pc += 2;
+            self.regs.vx[self.key_out as usize] = key as u8;
+            self.key_out = 0;
+        }
+    }
+
     pub fn step(&mut self) -> Result<(), EmuErrorWithCtx> {
+        if self.waiting_for_key {
+            return Ok(());
+        }
+
         let pc = self.regs.pc;
         let opcode = self.ram.read_u16(pc).map_err(|e| EmuErrorWithCtx {
             error: e,
@@ -527,13 +577,21 @@ impl Emu {
 
     #[inline]
     fn op_skip_if_key(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        let key = self.regs.vx[vx as usize];
+        if self.key_state[key as usize] == KeyState::Pressed {
+            self.regs.pc += 2;
+        }
+
         Ok(())
     }
 
     #[inline]
     fn op_skip_if_not_key(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        let key = self.regs.vx[vx as usize];
+        if self.key_state[key as usize] == KeyState::Released {
+            self.regs.pc += 2;
+        }
+
         Ok(())
     }
 
@@ -545,7 +603,8 @@ impl Emu {
 
     #[inline]
     fn op_wait_for_key(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        self.waiting_for_key = true;
+        self.key_out = vx;
         Ok(())
     }
 
@@ -1164,5 +1223,27 @@ mod tests {
 
         emu.op_random(0, 0x00).unwrap();
         assert_eq!(emu.regs.vx[0], 0);
+    }
+
+    #[test]
+    fn test_op_skip_if_key() {
+        let mut emu = Emu::new();
+        emu.op_skip_if_key(0).unwrap();
+        assert_eq!(emu.regs.pc, 0);
+
+        emu.key_state[0] = KeyState::Pressed;
+        emu.op_skip_if_key(0).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+    }
+
+    #[test]
+    fn test_op_skip_if_not_key() {
+        let mut emu = Emu::new();
+        emu.op_skip_if_not_key(0).unwrap();
+        assert_eq!(emu.regs.pc, 2);
+
+        emu.key_state[0] = KeyState::Pressed;
+        emu.op_skip_if_not_key(0).unwrap();
+        assert_eq!(emu.regs.pc, 2);
     }
 }
