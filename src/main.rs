@@ -16,6 +16,9 @@ mod emu;
 
 const SCALE: u32 = 10;
 
+// This sets the speed of the emulator.
+const STEPS_PER_FRAME: usize = 100;
+
 struct App<'win> {
     window: Option<Arc<Window>>,
     pixels: Option<Pixels<'win>>,
@@ -100,12 +103,11 @@ impl<'win> ApplicationHandler for App<'win> {
                 self.emu.set_key(key, state);
             }
             WindowEvent::RedrawRequested => {
-                // TODO: this isn't a great way to do this because this event can be fired at
-                // somewhat random times
+                // TODO: I need to figure out how to make redraws regular (like at 60hz) so that
+                // this is somewhat reliable. But I still need to check the time for the timers
+                // because redraws can also be triggered by things like resizing the window
                 self.emu.tick_timers();
-
-                // TODO: Need to figure out a better way of handling instruction cycles.
-                for _ in 0..100 {
+                for _ in 0..STEPS_PER_FRAME {
                     self.emu.step().expect("Program step failed!");
                 }
 

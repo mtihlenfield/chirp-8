@@ -85,14 +85,19 @@ impl Error for EmuError {}
 #[derive(Debug)]
 pub struct EmuErrorWithCtx {
     error: EmuError,
-    ctx: Registers,
+    regs: Registers,
+    stack: Vec<u16>,
 }
 
 impl Error for EmuErrorWithCtx {}
 
 impl Display for EmuErrorWithCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Err: {}, Context: {:?}", self.error, self.ctx)
+        write!(
+            f,
+            "Err: {}, Registers: {:?}, Stack: {:?}",
+            self.error, self.regs, self.stack
+        )
     }
 }
 
@@ -294,7 +299,8 @@ impl Emu {
         let pc = self.regs.pc;
         let opcode = self.ram.read_u16(pc).map_err(|e| EmuErrorWithCtx {
             error: e,
-            ctx: self.regs.clone(),
+            regs: self.regs.clone(),
+            stack: self.stack.clone(),
         })?;
 
         // println!("0x{:x}: {:x}", pc, opcode);
@@ -353,7 +359,11 @@ impl Emu {
         if let Err(e) = res {
             let mut ctx = self.regs.clone();
             ctx.pc = pc;
-            Err(EmuErrorWithCtx { error: e, ctx: ctx })
+            Err(EmuErrorWithCtx {
+                error: e,
+                regs: ctx,
+                stack: self.stack.clone(),
+            })
         } else {
             Ok(())
         }
