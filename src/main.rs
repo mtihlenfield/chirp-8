@@ -1,45 +1,7 @@
-// http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
-// https://github.com/Timendus/chip8-test-suite
-// https://johnearnest.github.io/chip8Archive/
+// Reference - http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
+// Test Suite: https://github.com/Timendus/chip8-test-suite
+// Some games to try: https://johnearnest.github.io/chip8Archive/
 
-// What should the backend api look like? Frontend needs: emulator interface that allows:
-//     - loading a program in to ram at an address
-//     - exposing the display buffer in some way
-//     - passing through key events
-//     - sound register
-//     - all ram and register access probably needs to be threadsafe? So that the frontend can run
-//     the timers, cpu, and display on different threads?
-//         - Realistically we may only need one extra thread: the timer thread
-// How to handle the clock? The delay and sound registers need to be able to dec at 60hz
-//     - Naive implementation would be to just poll the monotonic clock until we hit 1/60th of a
-//     second
-//     - Could use timer_create() with a monotonic clock to get a signal at 60hz
-//         - From what I'm reading this is painful to do in rust
-//     - Middle ground appears to be keeping a separate thread that just handles the timing
-//         - Passing the delay and sound registers as Arc<AtomicU8> and let the thread update them
-//         - Would be a good way to practice with threads and
-//      - Generally it's not good for libraries to start their own thread. Maybe we just expose
-//      the ability to decrement the registers (in a threadsafe way) and leave it up to the front
-//      end to handle how often they are decremented
-// The display:
-//     - 64 x 32 *pixels*
-//     - Display updates done through the dxyn instruction where:
-//         - x: the register holding the x coord
-//         - y: the registor holding the y coord
-//         - n: the number of rows the sprite takes up (aka the height of the sprite in pixels, aka
-//         the length of the sprite in bytes)
-//         - The address of the sprite that is to be drawn is read from the I register
-//         - Sprites are drawn by xor'ing the sprite on to the current screen!
-//             - pixel_on XOR existing_on → pixel turns off
-//             - pixel_on XOR existing_off → pixel turns on
-//             - pixel_off XOR anything → no change
-//         - If a draw turns a pixel off, the VF is set to one. Otherwise it is set to 0
-//         - Sprites wrap around the screen if they go past the boundaries
-//    - Address range 0x000 - 0x04f is supposed to hold the systems default font
-//
-// The UI:
-//      - us pixels and winit lib?
-//
 use pixels::{Pixels, SurfaceTexture};
 use std::env;
 use std::sync::Arc;
@@ -138,6 +100,10 @@ impl<'win> ApplicationHandler for App<'win> {
                 self.emu.set_key(key, state);
             }
             WindowEvent::RedrawRequested => {
+                // TODO: this isn't a great way to do this because this event can be fired at
+                // somewhat random times
+                self.emu.tick_timers();
+
                 // TODO: Need to figure out a better way of handling instruction cycles.
                 for _ in 0..100 {
                     self.emu.step().expect("Program step failed!");

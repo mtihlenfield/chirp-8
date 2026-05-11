@@ -1,4 +1,3 @@
-use rand::random;
 use std::error::Error;
 use std::fmt::Display;
 
@@ -278,7 +277,7 @@ impl Emu {
     pub fn set_key(&mut self, key: Key, state: KeyState) {
         self.key_state[key as usize] = state;
 
-        if state == KeyState::Pressed && self.waiting_for_key {
+        if state == KeyState::Released && self.waiting_for_key {
             self.waiting_for_key = false;
             self.regs.pc += 2;
             self.regs.vx[self.key_out as usize] = key as u8;
@@ -286,11 +285,12 @@ impl Emu {
         }
     }
 
-    pub fn step(&mut self) -> Result<(), EmuErrorWithCtx> {
-        if self.waiting_for_key {
-            return Ok(());
-        }
+    pub fn tick_timers(&mut self) {
+        self.regs.dt = self.regs.dt.saturating_sub(1);
+        self.regs.st = self.regs.st.saturating_sub(1);
+    }
 
+    pub fn step(&mut self) -> Result<(), EmuErrorWithCtx> {
         let pc = self.regs.pc;
         let opcode = self.ram.read_u16(pc).map_err(|e| EmuErrorWithCtx {
             error: e,
@@ -560,6 +560,8 @@ impl Emu {
                     + ((y_pixel as usize) + (row_idx % DISPLAY_ROWS as usize))
                         * DISPLAY_COLS as usize;
 
+                // TODO: Not sure if collision detection is working - flight runner game not
+                // detecting
                 let state = (row >> i) & 1;
                 if state == 1 && self.frame_buff[idx] == 1 {
                     self.regs.vx[FLAG_REG] = 1;
@@ -597,12 +599,16 @@ impl Emu {
 
     #[inline]
     fn op_load_delay(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        self.regs.vx[vx as usize] = self.regs.dt;
         Ok(())
     }
 
     #[inline]
     fn op_wait_for_key(&mut self, vx: u8) -> Result<(), EmuError> {
+        // On the original hardware, the key press was detected by polling in a loop,
+        // and the keycode wasn't stored until the key went back up. So what we are really waiting
+        // for is a key to be released.
+        self.regs.pc -= 2;
         self.waiting_for_key = true;
         self.key_out = vx;
         Ok(())
@@ -610,13 +616,13 @@ impl Emu {
 
     #[inline]
     fn op_set_delay(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        self.regs.dt = self.regs.vx[vx as usize];
         Ok(())
     }
 
     #[inline]
     fn op_set_sound(&mut self, vx: u8) -> Result<(), EmuError> {
-        // TODO:
+        self.regs.st = self.regs.vx[vx as usize];
         Ok(())
     }
 
