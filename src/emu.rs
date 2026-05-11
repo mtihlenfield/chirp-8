@@ -140,7 +140,6 @@ impl Ram {
     }
 
     fn write_slice(&mut self, addr: u16, data: &[u8]) -> Result<(), EmuError> {
-        // TODO: is there a better way to handle this length conversion?
         check_addr_range(addr, data.len() as u16)?;
 
         self.ram[(addr as usize)..((addr as usize) + data.len())].copy_from_slice(data);
@@ -562,7 +561,6 @@ impl Emu {
         let y_pixel = self.regs.vx[vy as usize];
         let sprite_bytes = self.ram.read_slice(self.regs.i, num_bytes as u16)?;
 
-        // TODO: This is pretty dirty but it works. There is surely a faster way to do this with bit manipulation
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
             let mut col = 0;
             for i in (0..8).rev() {
@@ -570,8 +568,6 @@ impl Emu {
                     + ((y_pixel as usize) + (row_idx % DISPLAY_ROWS as usize))
                         * DISPLAY_COLS as usize;
 
-                // TODO: Not sure if collision detection is working - flight runner game not
-                // detecting
                 let state = (row >> i) & 1;
                 if state == 1 && self.frame_buff[idx] == 1 {
                     self.regs.vx[FLAG_REG] = 1;
