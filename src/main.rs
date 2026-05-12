@@ -5,6 +5,7 @@
 use pixels::{Pixels, SurfaceTexture};
 use std::env;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -16,13 +17,15 @@ mod emu;
 
 const SCALE: u32 = 10;
 
-// This sets the speed of the emulator.
+const TIMER_HZ: u64 = 60;
+const TIMER_INTERVAL: Duration = Duration::from_micros(1_000_000 / TIMER_HZ);
 const STEPS_PER_FRAME: usize = 100;
 
 struct App<'win> {
     window: Option<Arc<Window>>,
     pixels: Option<Pixels<'win>>,
     emu: emu::Emu,
+    next_tick: Instant,
 }
 
 impl<'win> Default for App<'win> {
@@ -31,6 +34,7 @@ impl<'win> Default for App<'win> {
             window: None,
             pixels: None,
             emu: emu::Emu::default(),
+            next_tick: Instant::now(),
         }
     }
 }
@@ -61,6 +65,32 @@ impl<'win> ApplicationHandler for App<'win> {
 
         self.window = Some(window);
         self.pixels = Some(pixels);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+
+        if now >= self.next_tick {
+            self.emu.tick_timers();
+
+            // TODO: handle sound
+
+            for _ in 0..STEPS_PER_FRAME {
+                self.emu.step().expect("Program step failed!");
+            }
+
+            // Request the next frame
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+
+            self.next_tick += TIMER_INTERVAL;
+            if self.next_tick < Instant::now() {
+                self.next_tick = Instant::now() + TIMER_INTERVAL;
+            }
+        }
+
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -103,14 +133,6 @@ impl<'win> ApplicationHandler for App<'win> {
                 self.emu.set_key(key, state);
             }
             WindowEvent::RedrawRequested => {
-                // TODO: I need to figure out how to make redraws regular (like at 60hz) so that
-                // this is somewhat reliable. But I still need to check the time for the timers
-                // because redraws can also be triggered by things like resizing the window
-                self.emu.tick_timers();
-                for _ in 0..STEPS_PER_FRAME {
-                    self.emu.step().expect("Program step failed!");
-                }
-
                 let emu_frame_buff = self.emu.frame_buffer();
 
                 if let Some(pixels) = &mut self.pixels {
@@ -125,11 +147,6 @@ impl<'win> ApplicationHandler for App<'win> {
                         pixel.copy_from_slice(&[value, value, value, 0xFF]);
                     }
                     pixels.render().unwrap();
-                }
-
-                // Request the next frame
-                if let Some(window) = &self.window {
-                    window.request_redraw();
                 }
             }
             _ => (),
