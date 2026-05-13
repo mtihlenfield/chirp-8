@@ -5,8 +5,8 @@ const RAM_SIZE: u16 = 0x1000;
 const STACK_SIZE: u8 = 16;
 
 // Note that this is in pixels.
-pub const DISPLAY_COLS: u16 = 64;
-pub const DISPLAY_ROWS: u16 = 32;
+pub const DISPLAY_COLS: usize = 64;
+pub const DISPLAY_ROWS: usize = 32;
 pub const UNRESERVED_START: u16 = 0x200;
 pub const DEFAULT_FONT_START: u16 = 0x0;
 pub const DEFAULT_FONT_LEN: u16 = 0x5;
@@ -236,7 +236,7 @@ impl Emu {
             regs: Registers::default(),
             ram: Ram::default(),
             stack: Vec::with_capacity(STACK_SIZE as usize),
-            frame_buff: vec![0; (DISPLAY_COLS * DISPLAY_ROWS) as usize],
+            frame_buff: vec![0; DISPLAY_COLS * DISPLAY_ROWS],
             key_state: vec![KeyState::Released; NUM_KEYS as usize],
             waiting_for_key: false,
             key_out: 0,
@@ -557,17 +557,26 @@ impl Emu {
 
     #[inline]
     fn op_display(&mut self, vx: u8, vy: u8, num_bytes: u8) -> Result<(), EmuError> {
-        let x_pixel = self.regs.vx[vx as usize];
-        let y_pixel = self.regs.vx[vy as usize];
+        // If the entire sprite is off the screen, it should wrap around. But if only part
+        // of the sprite is off screen, then the sprite just gets clipped.
+        let start_pixel_x = (self.regs.vx[vx as usize] as usize) % DISPLAY_COLS;
+        let start_pixel_y = (self.regs.vx[vy as usize] as usize) % DISPLAY_ROWS;
         let sprite_bytes = self.ram.read_slice(self.regs.i, num_bytes as u16)?;
 
+        // TODO: we're failing the quirks test on clipping and not waiting for the vertical
+        // blank
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
-            let mut col = 0;
+            // Can't use i for this because it's going in reverse
+            let mut col_idx = 0;
             for i in (0..8).rev() {
-                let idx = ((x_pixel as usize) + (col % DISPLAY_COLS as usize))
-                    + ((y_pixel as usize) + (row_idx % DISPLAY_ROWS as usize))
-                        * DISPLAY_COLS as usize;
+                let pixel_x = start_pixel_x + col_idx;
+                let pixel_y = start_pixel_y + row_idx;
 
+                if pixel_x >= DISPLAY_COLS || pixel_y >= DISPLAY_ROWS {
+                    continue;
+                }
+
+                let idx = pixel_x + (pixel_y * DISPLAY_COLS);
                 let state = (row >> i) & 1;
                 if state == 1 && self.frame_buff[idx] == 1 {
                     self.regs.vx[FLAG_REG] = 1;
@@ -576,7 +585,7 @@ impl Emu {
                 }
 
                 self.frame_buff[idx] ^= state;
-                col += 1;
+                col_idx += 1;
             }
         }
 
@@ -1088,7 +1097,17 @@ mod tests {
     // #[test]
     // fn test_op_display() {
     //     let mut emu = Emu::new();
-    //     // TODO:
+
+    //     // Normal sprite write at 0,0
+    //     emu.op_load_sprite(0).unwrap();
+    //     emu.regs.vx[0] = 0;
+    //     emu.regs.vx[1] = 0;
+    //     emu.op_display(0, 1, 5).unwrap();
+    //     assert_eq!(emu.frame_buffer()[0..5], [1, 1, 1, 1, 0, ]);
+    //     assert_eq!(emu.frame_buffer()[5..10], [1, 0, 0, 1, 0]);
+    //     assert_eq!(emu.frame_buffer()[15..20], [1, 0, 0, 1, 0]);
+    //     assert_eq!(emu.frame_buffer()[25..30], [1, 0, 0, 1, 0]);
+    //     assert_eq!(emu.frame_buffer()[30..35], [1, 1, 1, 1, 0]);
     // }
 
     #[test]

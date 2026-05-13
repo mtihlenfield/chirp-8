@@ -174,36 +174,25 @@ fn main() {
     let program = if let Some(path) = args.next() {
         std::fs::read(path).unwrap()
     } else {
-        // v0 = sprite index
-        // v1 = col
-        // v2 = row
-        // [
-        //     0x60, 0x01, // Load the index of the hex sprite in to v0
-        //     0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
-        //     0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
-        //     0xf0, 0x29, // Set I to the sprite V0
-        //     0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
-        //     0x70, 0x01, // bump v0 to the next index
-        //     0x40, 0x11, // skip the next instr if  v0 =! 17
-        //     0x12, 0x1e, // jump to the infinite loop
-        //     0x40, 0x0a, // skip the next instr if v0 =! 10
-        //     0x12, 0x18, // jump 4 instrs forward (0x218)
-        //     0x71, 0x05, // move the col over to the next char
-        //     0x12, 0x04, // Loop back to the point where we set I and start again
-        //     0x72, 0x06, // incr v2 by 6 (chars are 5 rows, add 1 row for spacing)
-        //     0x61, 0x00, // set v1 to 0
-        //     0x12, 0x06, // Loop back to the point where we set I and start again
-        //     0x12, 0x1e, // Loop forever
-        // ]
-        // .to_vec()
-
         [
-            0x60, 0x0f, // Load the index of the hex sprite in to v0
-            0x61, 0x00, // Load 0x00 in to v1 - the x coord for the sprite
-            0x62, 0x00, // Load 0x00 in to v2 - the y coord for the sprite
+            // Little program that lets you move the sprite with the a/w/s/d keys
+            0x60, 0x00, // Load the index of the hex sprite in to v0
+            0x61, 0x00, // Set the x coord for the sprite
+            0x62, 0x0e, // Set the y coord for the sprite
+            0x63, 0x01, // Set the amount by which we will jump when a key is pressed
             0xf0, 0x29, // Set I to the sprite V0
             0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
-            0x12, 0x00, // Loop forever
+            0xf7, 0x0a, // Wait for any key press before continuing
+            0xd1, 0x25, // Display the sprite again to clear it
+            0x47, 0x09, // skip the next instr if the key that was pressed was not keypad 9
+            0x81, 0x34, // Bump the x coord to the right
+            0x47, 0x07, // skip the next instr if the key that was pressed was not keypad 7
+            0x81, 0x35, // Bump the x coord to the left
+            0x47, 0x05, // skip the next instr if the key that was pressed was not keypad 5
+            0x82, 0x35, // Bump the y coord up
+            0x47, 0x08, // skip the next instr if the key that was pressed was not keypad 8
+            0x82, 0x34, // Bump the y coord down
+            0x12, 0x0a, // Loop forever
         ]
         .to_vec()
     };
