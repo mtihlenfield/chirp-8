@@ -472,13 +472,16 @@ impl Emu {
     #[inline]
     fn op_or(&mut self, vx: u8, vy: u8) -> Result<(), EmuError> {
         self.regs.vx[vx as usize] |= self.regs.vx[vy as usize];
-
+        // The cowgod spec doesn't mention this, but the chip8-test-suite expects it
+        self.regs.vx[FLAG_REG] = 0;
         Ok(())
     }
 
     #[inline]
     fn op_and(&mut self, vx: u8, vy: u8) -> Result<(), EmuError> {
         self.regs.vx[vx as usize] &= self.regs.vx[vy as usize];
+        // The cowgod spec doesn't mention this, but the chip8-test-suite expects it
+        self.regs.vx[FLAG_REG] = 0;
 
         Ok(())
     }
@@ -486,6 +489,8 @@ impl Emu {
     #[inline]
     fn op_xor(&mut self, vx: u8, vy: u8) -> Result<(), EmuError> {
         self.regs.vx[vx as usize] ^= self.regs.vx[vy as usize];
+        // The cowgod spec doesn't mention this, but the chip8-test-suite expects it
+        self.regs.vx[FLAG_REG] = 0;
 
         Ok(())
     }
@@ -665,14 +670,22 @@ impl Emu {
     #[inline]
     fn op_store_regs(&mut self, vx: u8) -> Result<(), EmuError> {
         self.ram
-            .write_slice(self.regs.i, &self.regs.vx[0..=(vx as usize)])
+            .write_slice(self.regs.i, &self.regs.vx[0..=(vx as usize)])?;
+        // The cowgod spec does not mention this, but the original chip-8 incremented the
+        // index register as it iterated through the registers. So at the end of the instruction
+        // index = index + vx + 1. The chip8-test-suite expects this
+        self.regs.i += (vx as u16) + 1;
+        Ok(())
     }
 
     #[inline]
     fn op_load_regs(&mut self, vx: u8) -> Result<(), EmuError> {
         let vals = self.ram.read_slice(self.regs.i, (vx + 1) as u16)?;
         self.regs.vx[0..=(vx as usize)].copy_from_slice(vals);
-
+        // The cowgod spec does not mention this, but the original chip-8 incremented the
+        // index register as it iterated through the registers. So at the end of the instruction
+        // index = index + vx + 1. The chip8-test-suite expects this
+        self.regs.i += (vx as u16) + 1;
         Ok(())
     }
 }
@@ -956,8 +969,10 @@ mod tests {
 
         emu.regs.vx[0xa] = 0xf0;
         emu.regs.vx[0xb] = 0x03;
+        emu.regs.vx[FLAG_REG] = 1;
         emu.op_or(0xa, 0xb).unwrap();
         assert_eq!(emu.regs.vx[0xa], 0xf3);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
     }
 
     #[test]
@@ -966,8 +981,10 @@ mod tests {
 
         emu.regs.vx[0xa] = 0xf4;
         emu.regs.vx[0xb] = 0xf3;
+        emu.regs.vx[FLAG_REG] = 1;
         emu.op_and(0xa, 0xb).unwrap();
         assert_eq!(emu.regs.vx[0xa], 0xf0);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
     }
 
     #[test]
@@ -976,8 +993,10 @@ mod tests {
 
         emu.regs.vx[0xa] = 0x54;
         emu.regs.vx[0xb] = 0x53;
+        emu.regs.vx[FLAG_REG] = 1;
         emu.op_xor(0xa, 0xb).unwrap();
         assert_eq!(emu.regs.vx[0xa], 0x7);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
     }
 
     #[test]
@@ -1143,6 +1162,7 @@ mod tests {
         for i in 0..16 {
             assert_eq!(emu.ram.read(i).unwrap(), (i + 1) as u8);
         }
+        assert_eq!(emu.regs.i, 0x10);
 
         emu.reset();
 
@@ -1151,7 +1171,8 @@ mod tests {
         emu.regs.i = 3;
         emu.op_store_regs(4).unwrap();
 
-        assert_eq!(emu.ram.read_slice(emu.regs.i, 5).unwrap(), &[1, 2, 3, 4, 5]);
+        assert_eq!(emu.ram.read_slice(3, 5).unwrap(), &[1, 2, 3, 4, 5]);
+        assert_eq!(emu.regs.i, 8);
     }
 
     #[test]
@@ -1168,6 +1189,7 @@ mod tests {
         for i in 0..16 {
             assert_eq!(emu.regs.vx[i as usize], i + 1);
         }
+        assert_eq!(emu.regs.i, 0x10);
 
         emu.reset();
 
@@ -1182,6 +1204,7 @@ mod tests {
         for i in 0..4 {
             assert_eq!(emu.regs.vx[i as usize], i + 4);
         }
+        assert_eq!(emu.regs.i, 8);
     }
 
     #[test]

@@ -176,23 +176,23 @@ fn main() {
     } else {
         [
             // Little program that lets you move the sprite with the a/w/s/d keys
-            0x60, 0x00, // Load the index of the hex sprite in to v0
-            0x61, 0x00, // Set the x coord for the sprite
-            0x62, 0x0e, // Set the y coord for the sprite
-            0x63, 0x01, // Set the amount by which we will jump when a key is pressed
-            0xf0, 0x29, // Set I to the sprite V0
-            0xd1, 0x25, // Display the 5 byte sprite at pixel (v1, v2)
-            0xf7, 0x0a, // Wait for any key press before continuing
-            0xd1, 0x25, // Display the sprite again to clear it
-            0x47, 0x09, // skip the next instr if the key that was pressed was not keypad 9
-            0x81, 0x34, // Bump the x coord to the right
-            0x47, 0x07, // skip the next instr if the key that was pressed was not keypad 7
-            0x81, 0x35, // Bump the x coord to the left
-            0x47, 0x05, // skip the next instr if the key that was pressed was not keypad 5
-            0x82, 0x35, // Bump the y coord up
-            0x47, 0x08, // skip the next instr if the key that was pressed was not keypad 8
-            0x82, 0x34, // Bump the y coord down
-            0x12, 0x0a, // Loop forever
+            0x60, 0x00, // 0x00 - Load the index of the hex sprite in to v0
+            0x61, 0x1c, // 0x02 - Set the x coord for the sprite
+            0x62, 0x0e, // 0x04 - Set the y coord for the sprite
+            0x63, 0x01, // 0x06 - Set the amount by which we will jump when a key is pressed
+            0xf0, 0x29, // 0x08 - Set I to the sprite V0
+            0xd1, 0x25, // 0x0a - Display the 5 byte sprite at pixel (v1, v2)
+            0xf7, 0x0a, // 0x0c - Wait for any key press before continuing
+            0xd1, 0x25, // 0x0e - Display the sprite again to clear it
+            0x47, 0x09, // 0x10 - skip the next instr if the key was not keypad 9
+            0x81, 0x34, // 0x12 - Bump the x coord to the right
+            0x47, 0x07, // 0x14 - skip the next instr if the key was not keypad 7
+            0x81, 0x35, // 0x16 - Bump the x coord to the left
+            0x47, 0x05, // 0x18 - skip the next instr if the key was not keypad 5
+            0x82, 0x35, // 0x1a - Bump the y coord up
+            0x47, 0x08, // 0x1c - skip the next instr if the key was not keypad 8
+            0x82, 0x34, // 0x1e - Bump the y coord down
+            0x12, 0x0a, // 0x20 - Jump back to the draw instr
         ]
         .to_vec()
     };
