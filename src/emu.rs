@@ -258,7 +258,7 @@ impl Emu {
     pub fn reset(&mut self) {
         self.regs = Registers::default();
         self.ram.clear();
-        self.stack.fill(0);
+        self.stack.clear();
         self.frame_buff.fill(0);
         self.key_state.fill(KeyState::Released);
     }
@@ -579,8 +579,6 @@ impl Emu {
 
         let mut collision = false;
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
-            // Can't use i for col because it's going in reverse
-            let mut col_idx = 0;
             let pixel_y = start_pixel_y + row_idx;
 
             // If only part of the sprite is off the screen, we clip it
@@ -588,7 +586,7 @@ impl Emu {
                 break;
             }
 
-            for i in (0..8).rev() {
+            for (col_idx, i) in (0..8).rev().enumerate() {
                 let pixel_x = start_pixel_x + col_idx;
 
                 if pixel_x >= DISPLAY_COLS {
@@ -599,7 +597,6 @@ impl Emu {
                 let state = (row >> i) & 1;
                 collision |= state == 1 && self.frame_buff[idx] == 1;
                 self.frame_buff[idx] ^= state;
-                col_idx += 1;
             }
         }
 
