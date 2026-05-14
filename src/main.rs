@@ -3,6 +3,8 @@
 // Some games to try: https://johnearnest.github.io/chip8Archive/
 
 use pixels::{Pixels, SurfaceTexture};
+use rodio::source::{SineWave, Source};
+use rodio::{MixerDeviceSink, Player};
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,6 +28,40 @@ struct App<'win> {
     pixels: Option<Pixels<'win>>,
     emu: emu::Emu,
     next_tick: Instant,
+    beeper: Beeper,
+}
+
+struct Beeper {
+    // sink is not used, but must be kept alive
+    _sink: MixerDeviceSink,
+    player: Player,
+}
+
+impl Beeper {
+    pub fn new() -> Beeper {
+        let mut handle =
+            rodio::DeviceSinkBuilder::open_default_sink().expect("open default audio stream");
+        handle.log_on_drop(false);
+        let player = rodio::Player::connect_new(&handle.mixer());
+
+        // Add a dummy source of the sake of the example.
+        let source = SineWave::new(440.0).amplify(0.2).repeat_infinite();
+        player.append(source);
+        player.pause();
+
+        Self {
+            _sink: handle,
+            player,
+        }
+    }
+
+    pub fn play(&self) {
+        self.player.play();
+    }
+
+    pub fn stop(&self) {
+        self.player.pause()
+    }
 }
 
 impl<'win> Default for App<'win> {
@@ -35,6 +71,7 @@ impl<'win> Default for App<'win> {
             pixels: None,
             emu: emu::Emu::default(),
             next_tick: Instant::now(),
+            beeper: Beeper::new(),
         }
     }
 }
@@ -73,7 +110,11 @@ impl<'win> ApplicationHandler for App<'win> {
         if now >= self.next_tick {
             self.emu.tick_timers();
 
-            // TODO: handle sound
+            if self.emu.beeper_on() {
+                self.beeper.play();
+            } else {
+                self.beeper.stop();
+            }
 
             for _ in 0..STEPS_PER_FRAME {
                 self.emu.step().expect("Program step failed!");
@@ -96,7 +137,6 @@ impl<'win> ApplicationHandler for App<'win> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                println!("The close button was pressed; stopping");
                 event_loop.exit();
             }
             WindowEvent::KeyboardInput {

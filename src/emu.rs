@@ -372,6 +372,16 @@ impl Emu {
         &self.frame_buff
     }
 
+    pub fn beeper_on(&self) -> bool {
+        self.regs.st > 0
+    }
+
+    #[cfg(test)]
+    pub fn get_pixel(&self, row: usize, col: usize) -> u8 {
+        let idx = col + (row * DISPLAY_COLS);
+        self.frame_buff[idx]
+    }
+
     #[inline]
     fn op_ret(&mut self) -> Result<(), EmuError> {
         self.regs.pc = self.stack.pop().ok_or(EmuError::StackUnderflowError)?;
@@ -562,36 +572,41 @@ impl Emu {
 
     #[inline]
     fn op_display(&mut self, vx: u8, vy: u8, num_bytes: u8) -> Result<(), EmuError> {
-        // If the entire sprite is off the screen, it should wrap around. But if only part
-        // of the sprite is off screen, then the sprite just gets clipped.
+        // If the entire sprite is off the screen, it should wrap around.
         let start_pixel_x = (self.regs.vx[vx as usize] as usize) % DISPLAY_COLS;
         let start_pixel_y = (self.regs.vx[vy as usize] as usize) % DISPLAY_ROWS;
         let sprite_bytes = self.ram.read_slice(self.regs.i, num_bytes as u16)?;
 
-        // TODO: we're failing the quirks test on clipping and not waiting for the vertical
-        // blank
+        let mut collision = false;
         for (row_idx, row) in sprite_bytes.into_iter().enumerate() {
-            // Can't use i for this because it's going in reverse
+            // Can't use i for col because it's going in reverse
             let mut col_idx = 0;
+            let pixel_y = start_pixel_y + row_idx;
+
+            // If only part of the sprite is off the screen, we clip it
+            if pixel_y >= DISPLAY_ROWS {
+                break;
+            }
+
             for i in (0..8).rev() {
                 let pixel_x = start_pixel_x + col_idx;
-                let pixel_y = start_pixel_y + row_idx;
 
-                if pixel_x >= DISPLAY_COLS || pixel_y >= DISPLAY_ROWS {
-                    continue;
+                if pixel_x >= DISPLAY_COLS {
+                    break;
                 }
 
                 let idx = pixel_x + (pixel_y * DISPLAY_COLS);
                 let state = (row >> i) & 1;
-                if state == 1 && self.frame_buff[idx] == 1 {
-                    self.regs.vx[FLAG_REG] = 1;
-                } else {
-                    self.regs.vx[FLAG_REG] = 0;
-                }
-
+                collision |= state == 1 && self.frame_buff[idx] == 1;
                 self.frame_buff[idx] ^= state;
                 col_idx += 1;
             }
+        }
+
+        if collision {
+            self.regs.vx[FLAG_REG] = 1;
+        } else {
+            self.regs.vx[FLAG_REG] = 0;
         }
 
         Ok(())
@@ -1113,21 +1128,40 @@ mod tests {
         assert_eq!(emu.regs.vx[FLAG_REG], 1);
     }
 
-    // #[test]
-    // fn test_op_display() {
-    //     let mut emu = Emu::new();
+    #[test]
+    fn test_op_display_wrap() {
+        // This is the sprite wrapping test from
+        // https://github.com/Timendus/chip8-test-suite/blob/main/src/tests/5-quirks.8o#L210
+        let mut emu = Emu::new();
+        let cursor = [
+            0b11111110, 0b11111110, 0b11111110, 0b11111110, 0b11111110, 0b11111110,
+        ];
+        emu.ram.write_slice(0x100, &cursor).unwrap();
 
-    //     // Normal sprite write at 0,0
-    //     emu.op_load_sprite(0).unwrap();
-    //     emu.regs.vx[0] = 0;
-    //     emu.regs.vx[1] = 0;
-    //     emu.op_display(0, 1, 5).unwrap();
-    //     assert_eq!(emu.frame_buffer()[0..5], [1, 1, 1, 1, 0, ]);
-    //     assert_eq!(emu.frame_buffer()[5..10], [1, 0, 0, 1, 0]);
-    //     assert_eq!(emu.frame_buffer()[15..20], [1, 0, 0, 1, 0]);
-    //     assert_eq!(emu.frame_buffer()[25..30], [1, 0, 0, 1, 0]);
-    //     assert_eq!(emu.frame_buffer()[30..35], [1, 1, 1, 1, 0]);
-    // }
+        emu.regs.i = 0x100;
+        emu.regs.vx[0] = 110;
+        emu.regs.vx[1] = 50;
+        emu.op_display(0, 1, 6).unwrap();
+        assert_eq!(emu.get_pixel(18, 46), 1);
+        assert_eq!(emu.regs.vx[FLAG_REG], 0);
+
+        emu.regs.vx[0] = 40;
+        emu.regs.vx[1] = 17;
+        emu.op_display(0, 1, 2).unwrap();
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        emu.regs.vx[0] = 52;
+        emu.op_display(0, 1, 2).unwrap();
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        emu.regs.vx[1] = 23;
+        emu.op_display(0, 1, 2).unwrap();
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+
+        emu.regs.vx[0] = 40;
+        emu.op_display(0, 1, 2).unwrap();
+        assert_eq!(emu.regs.vx[FLAG_REG], 1);
+    }
 
     #[test]
     fn test_op_load_sprite() {
